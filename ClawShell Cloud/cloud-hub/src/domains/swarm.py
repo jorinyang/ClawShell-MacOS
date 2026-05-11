@@ -416,3 +416,47 @@ class SwarmDomain:
             "assignments": assignments,
             "unassigned": [r for r, n in assignments.items() if n is None],
         }
+
+    async def broadcast_skill_version(self, params: dict) -> dict:
+        """
+        broadcast_skill_version: 广播技能版本信息到所有订阅者。
+
+        发布到 Topic.SKILL_REGISTERED 供节点订阅。
+        记录版本变更日志但不修改注册表。
+
+        Args:
+            params: dict with skill_id and version (required),
+                    node_id (optional, defaults to "broadcast"),
+                    name (optional), description (optional)
+        """
+        skill_id = params.get("skill_id")
+        version = params.get("version")
+        if not skill_id or not version:
+            return {"success": False, "error": "skill_id and version are required"}
+
+        node_id = params.get("node_id", "broadcast")
+        name = params.get("name", skill_id)
+        description = params.get("description", "")
+
+        from ..event_store.schema import Topic
+
+        payload = {
+            "skill_id": skill_id,
+            "version": version,
+            "node_id": node_id,
+            "name": name,
+            "description": description,
+        }
+
+        ev = Event.make(Topic.SKILL_REGISTERED, source=node_id, payload=payload)
+        await self.store.append(ev)
+        self.pubsub.publish(ev)
+
+        logger.info(f"[broadcast] skill_version broadcast: skill_id={skill_id} version={version} node_id={node_id}")
+
+        return {
+            "success": True,
+            "skill_id": skill_id,
+            "version": version,
+            "topic": Topic.SKILL_REGISTERED,
+        }

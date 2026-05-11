@@ -17,6 +17,9 @@ from protocol import EdgeProtocol
 from sync_engine import SyncEngine
 from eventbus import EventBus, Event, EventType, configure_eventbus
 from edge_self_healing import EdgeSelfHealing
+from network_discovery import NetworkDiscovery
+from device_monitor import DeviceMonitor
+from knowledge_puller import KnowledgePuller
 
 # 目录初始化（必须在 logging 之前）
 CONFIG_PATH = Path.home() / ".clawshell-local" / "config" / "cloud.json"
@@ -69,6 +72,28 @@ class EdgeGateway:
         self.self_healing.subscribe_to_events()
         self.self_healing.start()
 
+        # D1: Network Discovery（网络发现）
+        self.network_discovery = NetworkDiscovery(
+            eventbus=self.eventbus,
+            sync_engine=self.sync_engine,
+        )
+        self.network_discovery.start()
+
+        # D2: Device Monitor（设备监控）
+        self.device_monitor = DeviceMonitor(
+            eventbus=self.eventbus,
+            sync_engine=self.sync_engine,
+        )
+        self.device_monitor.start()
+
+        # D3: Knowledge Puller（知识拉取）
+        self.knowledge_puller = KnowledgePuller(
+            eventbus=self.eventbus,
+            sync_engine=self.sync_engine,
+            protocol=self.protocol,
+        )
+        self.knowledge_puller.start()
+
         self.running = False
 
     async def handle_push(self, message: dict):
@@ -106,6 +131,12 @@ class EdgeGateway:
         self.running = False
         if hasattr(self, 'self_healing'):
             self.self_healing.stop()
+        if hasattr(self, 'network_discovery'):
+            self.network_discovery.stop()
+        if hasattr(self, 'device_monitor'):
+            self.device_monitor.stop()
+        if hasattr(self, 'knowledge_puller'):
+            self.knowledge_puller.stop()
         if hasattr(self, 'eventbus'):
             self.eventbus.stop_async_processing()
         await self.protocol.close()

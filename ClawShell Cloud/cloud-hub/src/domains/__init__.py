@@ -14,6 +14,17 @@ from .swarm import (
     SwarmDomain, NodeRegistry, TrustManager, EcologyMatcher,
     Node, NodeType, NodeStatus,
 )
+from .deep_think import DeepThinkEngine
+from .review import ReviewDomain, ReviewResult
+from .feedback_loop import (
+    FeedbackControlLoop, MetricCollector, ControlSignal,
+    ControlAction, MetricSample,
+)
+from .global_optimizer import (
+    GlobalOptimizer, CostModel,
+    OptimizationGoal, OptimizationResult, AllocationPlan,
+    ResourceQuota, ResourceType,
+)
 
 __all__ = [
     # Base
@@ -28,6 +39,8 @@ __all__ = [
     "GenomeDomain",
     "AdaptiveDomain",
     "SwarmDomain",
+    "DeepThinkEngine",
+    "ReviewDomain",
     # Schema classes
     "Genome",
     "KnowledgeEntry",
@@ -35,6 +48,7 @@ __all__ = [
     "SkillState",
     "Condition",
     "HealthReport",
+    "ReviewResult",
     "Node",
     "NodeType",
     "NodeStatus",
@@ -45,4 +59,17 @@ __all__ = [
     "TrustManager",
     "EcologyMatcher",
     "NodeRegistry",
+    # Feedback & Optimizer
+    "FeedbackControlLoop",
+    "MetricCollector",
+    "ControlSignal",
+    "ControlAction",
+    "MetricSample",
+    "GlobalOptimizer",
+    "CostModel",
+    "OptimizationGoal",
+    "OptimizationResult",
+    "AllocationPlan",
+    "ResourceQuota",
+    "ResourceType",
 ]
