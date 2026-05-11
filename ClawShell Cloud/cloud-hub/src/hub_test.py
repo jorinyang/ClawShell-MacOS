@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """CloudHub 验收测试 — Mock OssStore + 完整 Domain 测试"""
-import asyncio, json, sys
+import asyncio, json, sys, time
 sys.path.insert(0, '/Users/yangyang/Desktop/ClawShell/ClawShell Cloud/cloud-hub')
 
 # OssEventStore API (confirmed):
@@ -99,6 +99,26 @@ async def main():
     hub_instance.genome_domain = GenomeDomain(hub_instance.store, hub_instance.pubsub)
     hub_instance.adaptive_domain = AdaptiveDomain(hub_instance.store, hub_instance.pubsub)
     hub_instance.swarm_domain = SwarmDomain(hub_instance.store, hub_instance.pubsub)
+
+    # Phase 1 增强组件（__init__ 不会执行，手动注入）
+    from src.event_store.knowledge_graph import KnowledgeGraph
+    from src.event_store.pattern_miner import PatternMiner
+    from src.event_store.dead_letter_queue import DeadLetterQueue
+    from src.event_store.event_tracer import EventTracer
+    from src.event_store.event_aggregator import EventAggregator
+    hub_instance.knowledge_graph = KnowledgeGraph()
+    hub_instance.pattern_miner = PatternMiner()
+    hub_instance.dlq = DeadLetterQueue()
+    hub_instance.tracer = EventTracer()
+    hub_instance.aggregator = EventAggregator()
+    from src.event_store.event_metrics import EventMetrics
+    from src.event_store.quality_evaluator import QualityEvaluator
+    from src.domains.self_healing import SelfHealingEngine
+    from src.domains.trust_manager import TrustManager
+    hub_instance.event_metrics = EventMetrics()
+    hub_instance.quality_evaluator = QualityEvaluator()
+    hub_instance.self_healing = SelfHealingEngine()
+    hub_instance.trust_manager = TrustManager()
 
     print("Hub ready. Running tests...\n")
 
@@ -208,6 +228,145 @@ async def main():
     # Cancel BEFORE waiting — execution completes fast (0.05s), so cancel must race it
     r = await hub_instance.workflow_domain.workflow_cancel({"execution_id": exec_id})
     check("Workflow: cancel", r.get("success"), r.get("status", r.get("error", "")))
+
+    # ── Phase 1: Knowledge Graph ─────────────────────────────────────────────
+    r = hub_instance._kg_entity_add({
+        "name": "Hermes", "entity_type": "agent", "entity_id": "hermes-001",
+        "properties": {"version": "v1.0", "capability": "reasoning"}
+    })
+    check("KG: entity_add", r.get("success"), r.get("entity", {}).get("name"))
+
+    r = hub_instance._kg_entity_add({
+        "name": "OpenClaw", "entity_type": "agent", "entity_id": "openclaw-001",
+        "properties": {"version": "v2.0", "capability": "orchestration"}
+    })
+    check("KG: entity_add 2nd", r.get("success"))
+
+    r = hub_instance._kg_relation_add({
+        "source_id": "hermes-001", "target_id": "openclaw-001",
+        "relation_type": "integrates_with", "weight": 0.9
+    })
+    check("KG: relation_add", r.get("success"))
+
+    r = hub_instance._kg_query({"start_id": "hermes-001", "depth": 2})
+    check("KG: query", r.get("success") and len(r.get("entities", [])) >= 2,
+          f"entities={len(r.get('entities', []))}")
+
+    r = hub_instance._kg_infer({"entity_id": "hermes-001"})
+    check("KG: infer", r.get("success"), f"inferences={len(r.get('inferences', []))}")
+
+    r = hub_instance._kg_stats({})
+    check("KG: stats", r.get("success"))
+
+    # ── Phase 1: Pattern Miner ──────────────────────────────────────────────
+    for items in [["apple", "banana"], ["apple", "cherry"], ["banana", "cherry"], ["apple", "banana", "cherry"]]:
+        hub_instance._pm_transaction_add({"items": items})
+
+    r = hub_instance._pm_mine({})
+    check("PM: mine", r.get("success") and r.get("count", 0) >= 2,
+          f"patterns={r.get('count')}")
+
+    r = hub_instance._pm_association_rules({})
+    check("PM: association_rules", r.get("success"))
+
+    r = hub_instance._pm_stats({})
+    check("PM: stats", r.get("success"))
+
+    # ── Phase 1: Dead Letter Queue ─────────────────────────────────────────
+    r = hub_instance._dlq_add({
+        "event": {"topic": "test.fail", "payload": {"msg": "oops"}},
+        "reason": "PROCESSING_ERROR",
+        "error_message": "something went wrong"
+    })
+    check("DLQ: add", r.get("success"), r.get("dlq_id", "")[:20])
+
+    r = hub_instance._dlq_list({})
+    check("DLQ: list", r.get("success") and r.get("count", 0) >= 1,
+          f"count={r.get('count')}")
+
+    r = hub_instance._dlq_stats({})
+    check("DLQ: stats", r.get("success"))
+
+    # ── Phase 1: Event Tracer ──────────────────────────────────────────────
+    span_id = hub_instance._tracer_start({
+        "trace_id": "trace-001", "event_id": "evt-001",
+        "operation": "test_op", "tags": {"env": "test"}
+    }).get("span_id", "")
+
+    hub_instance._tracer_end({"trace_id": "trace-001", "span_id": span_id})
+    check("Tracer: start+end", bool(span_id), span_id[:20])
+
+    r = hub_instance._tracer_get({"trace_id": "trace-001"})
+    check("Tracer: get", r.get("success") and r.get("event_count", 0) >= 1,
+          f"count={r.get('event_count')}")
+
+    r = hub_instance._tracer_stats({})
+    check("Tracer: stats", r.get("success"))
+
+    # ── Phase 1: Event Aggregator ──────────────────────────────────────────
+    r = hub_instance._aggr_create_rule({
+        "name": "test_agg", "event_types": ["test.event"],
+        "time_window": 60.0, "count_threshold": 3
+    })
+    check("Aggr: create_rule", r.get("success"))
+
+    for i in range(3):
+        r = hub_instance._aggr_receive({
+            "event": {"type": "test.event", "id": f"evt-{i}", "timestamp": 0, "data": {"v": i}}
+        })
+    check("Aggr: receive x3", r.get("success"))
+
+    r = hub_instance._aggr_stats({})
+    check("Aggr: stats", r.get("success"))
+
+    # ── Phase 2: Self-Healing ─────────────────────────────────────────
+    r = hub_instance._heal_auto_backup({"components": ["/tmp/cloudshell_test"]})
+    check("Heal: auto_backup", r.get("success") == True or r.get("backup") is not None)
+
+    r = hub_instance._heal_health_report({})
+    check("Heal: health_report", r.get("success"))
+
+    # ── Phase 2: Trust Manager ────────────────────────────────────────
+    r = hub_instance._trust_evaluate({"node_id": "hermes-node-001"})
+    check("Trust: evaluate", r.get("success") and "score" in r)
+
+    hub_instance.trust_manager.record_success("test-node")
+    r = hub_instance._trust_evaluate({"node_id": "test-node"})
+    check("Trust: after_success", r.get("success") and r.get("score", 0) > 50)
+
+    r = {"success": True, "leaderboard": hub_instance.trust_manager.get_leaderboard()}
+    check("Trust: leaderboard", r.get("success") and isinstance(r.get("leaderboard"), list))
+
+    # ── Phase 2: Event Metrics ───────────────────────────────────────
+    for i in range(5):
+        hub_instance.event_metrics.record("test.event", size=100, latency=0.05)
+    hub_instance.event_metrics.record("test.event", is_error=True)
+    r = hub_instance.event_metrics.get_snapshot()
+    check("Metrics: snapshot", r.get("total_events", 0) >= 6)
+
+    r = hub_instance.event_metrics.get_top_events()
+    check("Metrics: top_events", len(r) >= 1)
+
+    r = hub_instance.event_metrics.get_error_rate()
+    check("Metrics: error_rate", r >= 0)
+
+    r = hub_instance.event_metrics.detect_anomalies()
+    check("Metrics: anomalies", isinstance(r, list))
+
+    # ── Phase 2: Quality Evaluator ──────────────────────────────────
+    r = hub_instance._quality_evaluate({
+        "entry": {
+            "id": "entry-001",
+            "content": "This is a detailed knowledge entry about AI agents.",
+            "tags": ["AI", "agents"],
+            "category": "technology",
+            "updated_at": time.time()
+        }
+    })
+    check("Quality: evaluate", r.get("success") and "score" in r)
+
+    r = hub_instance._quality_stats({})
+    check("Quality: stats", r.get("success"))
 
     # ── Summary ────────────────────────────────────────────────────────────────
     passed = sum(1 for s, _, _ in results if s == "PASS")

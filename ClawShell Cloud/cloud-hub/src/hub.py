@@ -23,6 +23,7 @@ import os
 import time
 import uuid
 from typing import Any, Dict, Optional
+from dataclasses import asdict
 
 import aiohttp
 import jwt
@@ -94,6 +95,26 @@ class CloudHub:
         self.genome_domain = GenomeDomain(self.store, self.pubsub)
         self.adaptive_domain = AdaptiveDomain(self.store, self.pubsub)
         self.swarm_domain = SwarmDomain(self.store, self.pubsub)
+
+        # Phase 1 增强组件（从 Windows 移植）
+        from .event_store.knowledge_graph import KnowledgeGraph
+        from .event_store.pattern_miner import PatternMiner
+        from .event_store.dead_letter_queue import DeadLetterQueue
+        from .event_store.event_tracer import EventTracer
+        from .event_store.event_aggregator import EventAggregator
+        from .event_store.event_metrics import EventMetrics
+        from .event_store.quality_evaluator import QualityEvaluator
+        from .domains.self_healing import SelfHealingEngine
+        from .domains.trust_manager import TrustManager
+        self.knowledge_graph = KnowledgeGraph()
+        self.pattern_miner = PatternMiner()
+        self.dlq = DeadLetterQueue()
+        self.tracer = EventTracer()
+        self.aggregator = EventAggregator()
+        self.event_metrics = EventMetrics()
+        self.quality_evaluator = QualityEvaluator()
+        self.self_healing = SelfHealingEngine()
+        self.trust_manager = TrustManager()
 
         # JWT
         self.jwt_secret = os.environ.get("JWT_SECRET", "change-me-in-production")
@@ -657,6 +678,96 @@ class CloudHub:
         if method == "swarm_ecology_match":
             return await self.swarm_domain.ecology_match(params)
 
+        # ── Phase 1 增强组件 ─────────────────────────────────────────────
+        # Knowledge Graph
+        if method == "kg_entity_add":
+            return self._kg_entity_add(params)
+        if method == "kg_relation_add":
+            return self._kg_relation_add(params)
+        if method == "kg_query":
+            return self._kg_query(params)
+        if method == "kg_infer":
+            return self._kg_infer(params)
+        if method == "kg_stats":
+            return self._kg_stats(params)
+        # Pattern Miner
+        if method == "pm_transaction_add":
+            return self._pm_transaction_add(params)
+        if method == "pm_mine":
+            return self._pm_mine(params)
+        if method == "pm_association_rules":
+            return self._pm_association_rules(params)
+        if method == "pm_stats":
+            return self._pm_stats(params)
+        # Dead Letter Queue
+        if method == "dlq_add":
+            return self._dlq_add(params)
+        if method == "dlq_retry":
+            return self._dlq_retry(params)
+        if method == "dlq_list":
+            return self._dlq_list(params)
+        if method == "dlq_stats":
+            return self._dlq_stats(params)
+        # Event Tracer
+        if method == "tracer_start":
+            return self._tracer_start(params)
+        if method == "tracer_end":
+            return self._tracer_end(params)
+        if method == "tracer_get":
+            return self._tracer_get(params)
+        if method == "tracer_stats":
+            return self._tracer_stats(params)
+        # Event Aggregator
+        if method == "aggr_create_rule":
+            return self._aggr_create_rule(params)
+        if method == "aggr_receive":
+            return self._aggr_receive(params)
+        if method == "aggr_stats":
+            return self._aggr_stats(params)
+
+        # Phase 2: Self-Healing
+        if method == "heal_auto_backup":
+            return self._heal_auto_backup(params)
+        if method == "heal_rollback":
+            return self._heal_rollback(params)
+        if method == "heal_health_report":
+            return self._heal_health_report(params)
+
+        # Phase 2: Trust Manager
+        if method == "trust_evaluate":
+            return self._trust_evaluate(params)
+        if method == "trust_record_success":
+            self.trust_manager.record_success(params.get("node_id", ""), params.get("details"))
+            return {"success": True}
+        if method == "trust_record_failure":
+            self.trust_manager.record_failure(params.get("node_id", ""), params.get("details"))
+            return {"success": True}
+        if method == "trust_leaderboard":
+            return {"success": True, "leaderboard": self.trust_manager.get_leaderboard()}
+
+        # Phase 2: Event Metrics
+        if method == "metrics_record":
+            self.event_metrics.record(params.get("event_type", ""),
+                                    size=params.get("size", 0),
+                                    latency=params.get("latency", 0.0),
+                                    is_error=params.get("is_error", False))
+            return {"success": True}
+        if method == "metrics_snapshot":
+            return {"success": True, "snapshot": self.event_metrics.get_snapshot()}
+        if method == "metrics_top":
+            top = self.event_metrics.get_top_events(limit=params.get("limit", 10),
+                                                     by=params.get("by", "count"))
+            return {"success": True, "top": [vars(t) for t in top]}
+        if method == "metrics_anomalies":
+            return {"success": True, "anomalies": self.event_metrics.detect_anomalies()}
+
+        # Phase 2: Quality Evaluator
+        if method == "quality_evaluate":
+            score = self.quality_evaluator.evaluate(params.get("entry", {}))
+            return {"success": True, "score": score.to_dict()}
+        if method == "quality_stats":
+            return {"success": True, "stats": self.quality_evaluator.get_stats()}
+
         # ── 未知 method ──────────────────────────────────────────────────────
         return {"error": f"Method not found: {method}", "code": -32601}
 
@@ -722,6 +833,212 @@ class CloudHub:
                 "replay_count": len(events),
             },
         }))
+
+    # ─── Phase 1 增强组件 handlers ────────────────────────────────────────
+
+    def _kg_entity_add(self, params: dict) -> dict:
+        entity = self.knowledge_graph.add_entity(
+            name=params.get("name", ""),
+            entity_type=params.get("entity_type", "concept"),
+            properties=params.get("properties", {}),
+            entity_id=params.get("entity_id"),
+        )
+        return {"success": True, "entity": entity.to_dict()}
+
+    def _kg_relation_add(self, params: dict) -> dict:
+        rel = self.knowledge_graph.add_relation(
+            source_id=params.get("source_id", ""),
+            target_id=params.get("target_id", ""),
+            relation_type=params.get("relation_type", "related_to"),
+            weight=params.get("weight", 1.0),
+            properties=params.get("properties", {}),
+        )
+        if rel is None:
+            return {"success": False, "error": "source or target entity not found"}
+        return {"success": True, "relation": rel.to_dict()}
+
+    def _kg_query(self, params: dict) -> dict:
+        result = self.knowledge_graph.query(
+            start_id=params.get("start_id", ""),
+            depth=params.get("depth", 2),
+            relation_type=params.get("relation_type"),
+        )
+        return {
+            "success": True,
+            "entities": [e.to_dict() for e in result.entities],
+            "relations": [r.to_dict() for r in result.relations],
+            "paths": result.paths,
+            "depth": result.depth,
+        }
+
+    def _kg_infer(self, params: dict) -> dict:
+        inferences = self.knowledge_graph.infer(params.get("entity_id", ""))
+        return {
+            "success": True,
+            "inferences": [
+                {"entity": e.to_dict(), "type": t, "confidence": c}
+                for e, t, c in inferences
+            ],
+        }
+
+    def _kg_stats(self, params: dict) -> dict:
+        return {"success": True, "stats": self.knowledge_graph.get_stats()}
+
+    # Pattern Miner
+
+    def _pm_transaction_add(self, params: dict) -> dict:
+        items = params.get("items", [])
+        if not isinstance(items, list):
+            return {"success": False, "error": "items must be a list"}
+        self.pattern_miner.add_transaction(items)
+        return {"success": True, "stats": self.pattern_miner.get_stats()}
+
+    def _pm_mine(self, params: dict) -> dict:
+        patterns = self.pattern_miner.mine_frequent_itemsets()
+        return {
+            "success": True,
+            "patterns": [p.to_dict() for p in patterns],
+            "count": len(patterns),
+        }
+
+    def _pm_association_rules(self, params: dict) -> dict:
+        rules = self.pattern_miner.mine_association_rules()
+        return {
+            "success": True,
+            "rules": [r.to_dict() for r in rules],
+            "count": len(rules),
+        }
+
+    def _pm_stats(self, params: dict) -> dict:
+        return {"success": True, "stats": self.pattern_miner.get_stats()}
+
+    # Dead Letter Queue
+
+    def _dlq_add(self, params: dict) -> dict:
+        from .event_store.dead_letter_queue import DLQReason
+        reason_str = params.get("reason", "unknown")
+        try:
+            reason = DLQReason(reason_str)
+        except Exception:
+            reason = DLQReason.UNKNOWN
+        dl_id = self.dlq.add(
+            event=params.get("event", {}),
+            reason=reason,
+            error_message=params.get("error_message", ""),
+            metadata=params.get("metadata"),
+        )
+        return {"success": True, "dlq_id": dl_id}
+
+    def _dlq_retry(self, params: dict) -> dict:
+        def processor(event):
+            return True  # 模拟处理成功
+        success = self.dlq.retry(params.get("dlq_id", ""), processor)
+        return {"success": success}
+
+    def _dlq_list(self, params: dict) -> dict:
+        pending = self.dlq.get_pending(limit=params.get("limit", 100))
+        return {
+            "success": True,
+            "dead_letters": [d.to_dict() for d in pending],
+            "count": len(pending),
+        }
+
+    def _dlq_stats(self, params: dict) -> dict:
+        stats = self.dlq.get_stats()
+        return {"success": True, "stats": asdict(stats)}
+
+    # Event Tracer
+
+    def _tracer_start(self, params: dict) -> dict:
+        span_id = self.tracer.start_trace(
+            trace_id=params.get("trace_id", ""),
+            event_id=params.get("event_id", ""),
+            operation=params.get("operation", ""),
+            parent_span_id=params.get("parent_span_id"),
+            tags=params.get("tags"),
+        )
+        return {"success": True, "span_id": span_id}
+
+    def _tracer_end(self, params: dict) -> dict:
+        self.tracer.end_span(
+            trace_id=params.get("trace_id", ""),
+            span_id=params.get("span_id", ""),
+            tags=params.get("tags"),
+        )
+        return {"success": True}
+
+    def _tracer_get(self, params: dict) -> dict:
+        result = self.tracer.get_trace(params.get("trace_id", ""))
+        if result is None:
+            return {"success": False, "error": "trace not found"}
+        return {
+            "success": True,
+            "trace_id": result.trace_id,
+            "total_duration": result.total_duration,
+            "event_count": result.event_count,
+            "spans": [s.to_dict() for s in result.spans],
+        }
+
+    def _tracer_stats(self, params: dict) -> dict:
+        return {"success": True, "stats": self.tracer.get_stats()}
+
+    # Event Aggregator
+
+    def _aggr_create_rule(self, params: dict) -> dict:
+        rule = self.aggregator.create_rule(
+            name=params.get("name", ""),
+            event_types=params.get("event_types", []),
+            time_window=params.get("time_window", 60.0),
+            count_threshold=params.get("count_threshold", 10),
+            aggregation_key=params.get("aggregation_key"),
+        )
+        return {"success": True, "rule": {"id": rule.id, "name": rule.name}}
+
+    def _aggr_receive(self, params: dict) -> dict:
+        event = params.get("event", {})
+        result = self.aggregator.receive_event(event)
+        if result is None:
+            return {"success": True, "aggregated": None}
+        return {"success": True, "aggregated": result.to_dict()}
+
+    def _aggr_stats(self, params: dict) -> dict:
+        return {"success": True, "stats": self.aggregator.get_stats()}
+
+    # ── Phase 2: Self-Healing ─────────────────────────────────────────
+
+    def _heal_auto_backup(self, params: dict) -> dict:
+        backup = self.self_healing.auto_backup(
+            components=params.get("components")
+        )
+        if backup:
+            return {"success": True, "backup": backup.to_dict()}
+        return {"success": False, "error": "backup failed"}
+
+    def _heal_rollback(self, params: dict) -> dict:
+        ok = self.self_healing.auto_rollback(params.get("checkpoint_id", ""))
+        return {"success": ok}
+
+    def _heal_health_report(self, params: dict) -> dict:
+        return {"success": True, "report": self.self_healing.get_health_report()}
+
+    # ── Phase 2: Trust Manager ────────────────────────────────────────
+
+    def _trust_evaluate(self, params: dict) -> dict:
+        return {"success": True, **self.trust_manager.evaluate(params.get("node_id", ""))}
+
+    # ── Phase 2: Event Metrics ────────────────────────────────────────
+
+    def _metrics_snapshot(self, params: dict) -> dict:
+        return {"success": True, "snapshot": self.event_metrics.get_snapshot()}
+
+    # ── Phase 2: Quality Evaluator ────────────────────────────────────
+
+    def _quality_evaluate(self, params: dict) -> dict:
+        score = self.quality_evaluator.evaluate(params.get("entry", {}))
+        return {"success": True, "score": score.to_dict()}
+
+    def _quality_stats(self, params: dict) -> dict:
+        return {"success": True, "stats": self.quality_evaluator.get_stats()}
 
     # ─── REST API ─────────────────────────────────────────────────────────────
 
