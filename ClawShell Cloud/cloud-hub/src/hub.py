@@ -1277,6 +1277,10 @@ class CloudHub:
     def _quality_stats(self, params: dict) -> dict:
         return {"success": True, "stats": self.quality_evaluator.get_stats()}
 
+    async def _handle_health(self, request: web.Request) -> web.Response:
+        """健康检查端点（docker-compose healthcheck）"""
+        return web.Response(text="ok\n", content_type="text/plain")
+
     # ─── REST API ─────────────────────────────────────────────────────────────
 
     async def _handle_rest(self, request: web.Request) -> web.Response:
@@ -1331,6 +1335,7 @@ class CloudHub:
         # REST API
         rest_app = web.Application()
         rest_app.router.add_route("/*", self._handle_rest)
+        rest_app.router.add_route("GET", "/health", self._handle_health)
         rest_runner = web.AppRunner(rest_app)
         await rest_runner.setup()
         rest_site = web.TCPSite(rest_runner, host, rest_port)

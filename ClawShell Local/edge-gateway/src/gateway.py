@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from protocol import EdgeProtocol
 from sync_engine import SyncEngine
+from eventbus import EventBus, Event, EventType, configure_eventbus
+from edge_self_healing import EdgeSelfHealing
 
 # 目录初始化（必须在 logging 之前）
 CONFIG_PATH = Path.home() / ".clawshell-local" / "config" / "cloud.json"
@@ -58,6 +60,15 @@ class EdgeGateway:
             cache_dir=Path.home() / ".clawshell-local" / "cache",
             sync_dir=Path.home() / ".clawshell-local" / "sync"
         )
+        self.eventbus = EventBus(sync_engine=self.sync_engine)
+        self.eventbus.start_async_processing()
+        configure_eventbus(self.sync_engine)
+
+        # Edge SelfHealing（心跳驱动，无 cron）
+        self.self_healing = EdgeSelfHealing(eventbus=self.eventbus)
+        self.self_healing.subscribe_to_events()
+        self.self_healing.start()
+
         self.running = False
 
     async def handle_push(self, message: dict):
@@ -93,6 +104,10 @@ class EdgeGateway:
 
     async def stop(self):
         self.running = False
+        if hasattr(self, 'self_healing'):
+            self.self_healing.stop()
+        if hasattr(self, 'eventbus'):
+            self.eventbus.stop_async_processing()
         await self.protocol.close()
 
 
