@@ -1,0 +1,21 @@
+edge:
+  sync_interval_seconds: 60
+  reconnect_delay_seconds: 5
+  request_timeout_seconds: 30
+
+cache:
+  memory_enabled: true
+  memory_max_size_mb: 500
+
+sync:
+  offline_queue_enabled: true
+  conflict_policy: cloud-authoritative
+
+platforms:
+  hermes:
+    enabled: true
+    mcp_config_path: ~/.hermes/config/mcp.yaml
+  openclaw:
+    enabled: true
+  wukong:
+    enabled: false

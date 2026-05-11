@@ -1,0 +1,21 @@
+server:
+  host: "0.0.0.0"
+  port: 8443
+
+jwt:
+  secret_env: "JWT_SECRET"
+  issuer: "clawshell-cloud"
+
+mcp_servers:
+  mempalace:
+    url_env: "MEMPALACE_URL"
+    default: "ws://mempalace:8444"
+  skill:
+    url_env: "SKILL_URL"
+    default: "ws://skill-registry:8445"
+  kanban:
+    url_env: "KANBAN_URL"
+    default: "ws://kanban:8446"
+
+logging:
+  level: INFO

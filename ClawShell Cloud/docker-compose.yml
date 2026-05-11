@@ -1,0 +1,98 @@
+version: "3.9"
+
+services:
+  # Cloud Hub — MCP WebSocket Router
+  cloud-hub:
+    build:
+      context: ./cloud-hub
+      dockerfile: Dockerfile
+    container_name: clawshell-cloud-hub
+    ports:
+      - "8443:8443"
+    environment:
+      - JWT_SECRET=${JWT_SECRET:?Please set JWT_SECRET}
+      - USER_ID=${USER_ID:?Please set USER_ID}
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./cloud-hub/data:/data
+      - ./cloud-hub/config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import websockets, asyncio; asyncio.run(websockets.connect('ws://localhost:8443'))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - clawshell-net
+
+  # MemPalace Cloud — 记忆中枢
+  mempalace:
+    image: python:3.12-slim
+    container_name: clawshell-mempalace
+    working_dir: /app
+    command: >
+      bash -c "pip install mempalace &&
+               python -m mempalace.mcp_server"
+    ports:
+      - "8444:8444"
+    environment:
+      - PALACE_PATH=/data/palace
+    volumes:
+      - ./mempalace-data:/data
+    restart: unless-stopped
+    networks:
+      - clawshell-net
+
+  # Skill Registry — 技能注册表
+  skill-registry:
+    build:
+      context: ./skill-registry
+      dockerfile: Dockerfile
+    container_name: clawshell-skill-registry
+    ports:
+      - "8445:8445"
+    environment:
+      - REGISTRY_DB_PATH=/data/registry.db
+    volumes:
+      - ./skill-registry/data:/data
+    restart: unless-stopped
+    networks:
+      - clawshell-net
+
+  # Kanban MCP — 任务看板
+  kanban:
+    build:
+      context: ./kanban-mcp
+      dockerfile: Dockerfile
+    container_name: clawshell-kanban
+    ports:
+      - "8446:8446"
+    environment:
+      - KANBAN_DATA_PATH=/data
+      - JWT_SECRET=${JWT_SECRET}
+    volumes:
+      - ./kanban-data:/data
+    restart: unless-stopped
+    networks:
+      - clawshell-net
+
+  # Nginx — 反向代理 + SSL
+  nginx:
+    image: nginx:alpine
+    container_name: clawshell-nginx
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      cloud-hub:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - clawshell-net
+
+networks:
+  clawshell-net:
+    driver: bridge

@@ -1,0 +1,19 @@
+# ClawShell Local 主配置
+# 由 install.sh 自动生成
+
+cloud:
+  enabled: true
+  url: ""  # 运行时从 cloud.json 读取
+  sync_interval_seconds: 60
+
+platforms:
+  # 由 scripts/discover.sh 自动发现并填充
+
+ecosystem:
+  mempalace:
+    path: ~/.mempalace
+    enabled: true
+  memos:
+    enabled: false
+  n8n:
+    enabled: false
