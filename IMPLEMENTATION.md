@@ -17,7 +17,7 @@
 
 ---
 
-## Phase 1：云端基础 + MemPalace 云化（3天）
+## Phase 1：云端基础 + Obsidian Vault OSS 同步（3天）
 
 **Day 2-3：Cloud Hub 骨架**
 
@@ -36,7 +36,7 @@
 - [ ] 错误响应封装（401/403）
 
 #### 1.3 请求路由（cloud-hub/src/router.py）
-- [ ] method name 解析（mempalace_* / skill_* / kanban_*）
+- [ ] method name 解析（vault_* / skill_* / kanban_*）
 - [ ] 路由到对应 MCP Server
 - [ ] 响应格式统一封装
 - [ ] 路由表配置（config.yaml）
@@ -53,28 +53,24 @@
 - [ ] upstream 指向 cloud-hub:8443
 - [ ] 80→443 重定向
 
-**Day 4：MemPalace Cloud 部署**
+**Day 4：Obsidian Vault OSS 同步**
 
-#### 1.6 MemPalace MCP Server Docker
-- [ ] mempalace-cloud/Dockerfile 完善
-- [ ] ChromaDB 持久化路径配置（/data/palace）
-- [ ] JWT secret 环境变量注入
-- [ ] 启动脚本（init-scripts/）
+#### 1.6 OSS Bucket 创建与配置
+- [ ] 阿里云 OSS 控制台创建 Bucket（命名如 `clawshell-vault`）
+- [ ] 创建 AccessKey（RAM 用户，限制 OSS 权限）
+- [ ] 配置 `rclone` 或 `s3fs` 挂载工具
+- [ ] vault-oss/config.yaml 配置文件（endpoint / bucket / access_key / secret_key）
 
-#### 1.7 持久化存储配置
-- [ ] docker-compose 中挂载 volumes
-- [ ] ECS 本地 SSD 路径规划
-- [ ] 数据备份策略（可选）
+#### 1.7 双向同步脚本（vault-oss/sync.sh）
+- [ ] `watchmedo` 监听本地 vault 目录变更
+- [ ] 变更文件实时上传到 OSS
+- [ ] OSS → 本地拉取脚本（`rclone sync oss:bucket/vault ~/Obsidian/Vault`）
+- [ ] 冲突处理（本地优先，上传前检查 md5）
 
-#### 1.8 与 Cloud Hub 集成
-- [ ] cloud-hub → mempalace MCP 调用链路
-- [ ] mempalace_search / mempalace_add / mempalace_list 工具注册
-- [ ] 连接池管理
-
-#### 1.9 本地测试
-- [ ] Edge Gateway 手动配置连接
-- [ ] JWT token 获取流程测试
-- [ ] `mempalace_search` 端到端验证
+#### 1.8 Cloud Hub Vault 路由（可选）
+- [ ] vault_list / vault_upload / vault_download 工具注册
+- [ ] JWT 认证 + OSS API 调用
+- [ ] 端到端验证：Edge → Cloud Hub → OSS
 
 ---
 
@@ -206,19 +202,19 @@
 **Day 10：生态组件安装**
 
 #### 4.1 install-ecosystem.sh
-- [ ] 交互式菜单（MemPalace / Memos / n8n / ChromaDB）
+- [ ] MemPalace（本地向量记忆）保留
 - [ ] 依赖检测（Docker / pip3 / brew）
 - [ ] 各组件安装函数
 - [ ] 安装后验证（健康检查）
 - [ ] 卸载函数
 
-#### 4.2 MemPalace 安装
+#### 4.2 MemPalace（本地向量记忆）
 - [ ] `pip3 install mempalace`
 - [ ] `mempalace init` 初始化
 - [ ] 配置 `~/.mempalace/config.yaml`
-- [ ] 启动服务
+- [ ] 启动服务（本地 MCP Server，端口 8444）
 
-#### 4.3 Memos 安装
+#### 4.3 Memos Local（本地结构化笔记）
 - [ ] Docker 方式检测
 - [ ] `docker run` 启动 memos
 - [ ] 端口配置（默认 5230）
@@ -331,12 +327,12 @@
 #### 6.2 Ansible 非 Docker 部署验证
 - [ ] inventory.yml 配置
 - [ ] playbook.yml 任务定义
-- [ ] 各 role 测试（cloud-hub / mempalace / nginx）
+- [ ] 各 role 测试（cloud-hub / skill-registry / kanban / nginx）
 - [ ] systemd 服务注册验证
 
 #### 6.3 数据迁移脚本（migrate-from-local.sh）
 - [ ] 从本地配置导出（discovered-platforms.yaml）
-- [ ] 从本地记忆导出（~/.mempalace/ → 云端）
+- [ ] 从本地 vault 导出到 OSS（rclone copy 本地vault oss:bucket/vault）
 - [ ] 迁移前备份
 - [ ] 迁移后校验
 
@@ -373,7 +369,7 @@
 | Phase | 完成标准 | 状态 |
 |-------|---------|------|
 | Phase 0 | Git仓库建立 / PLANNING.md | ✅ |
-| Phase 1 | docker-compose up 本地启动 Cloud Hub + MemPalace | 🔲 |
+| Phase 1 | docker-compose up 本地启动 Cloud Hub + OSS Bucket 创建 | 🔲 |
 | Phase 2 | discover.sh 检测 Hermes / Edge Gateway 启动无报错 | 🔲 |
 | Phase 3 | 断网后操作记录到 pending_operations.jsonl | 🔲 |
 | Phase 4 | install.sh 10分钟内完成端侧安装 | 🔲 |
@@ -385,7 +381,7 @@
 ## 依赖关系
 
 ```
-Phase 1（Cloud Hub + MemPalace Cloud）
+Phase 1（Cloud Hub + Obsidian Vault OSS）
     │
     ├──► Phase 2（Edge Gateway） ←─ 需要 Phase 1 的协议规范
     │         │
