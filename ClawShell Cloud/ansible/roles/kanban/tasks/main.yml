@@ -1,0 +1,11 @@
+---
+# Ansible Role: kanban
+- name: Create kanban directories
+  file:
+    path: /opt/clawshell/kanban
+    state: directory
+
+- name: Copy kanban-mcp files
+  copy:
+    src: "{{ playbook_dir }}/../../kanban-mcp/"
+    dest: /opt/clawshell/kanban/

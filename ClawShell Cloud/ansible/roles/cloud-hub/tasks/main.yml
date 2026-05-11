@@ -1,0 +1,29 @@
+---
+# Ansible Role: cloud-hub
+- name: Create ClawShell directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /opt/clawshell
+    - /opt/clawshell/cloud-hub
+    - /opt/clawshell/vault-oss
+
+- name: Copy cloud-hub files
+  copy:
+    src: "{{ playbook_dir }}/../../cloud-hub/"
+    dest: /opt/clawshell/cloud-hub/
+    mode: preserve
+
+- name: Create .env from template
+  template:
+    src: ../templates/env.j2
+    dest: /opt/clawshell/cloud-hub/.env
+    mode: '0600'
+
+- name: Build and start cloud-hub
+  docker_compose:
+    project_src: /opt/clawshell/cloud-hub
+    state: present
+    pulled: false

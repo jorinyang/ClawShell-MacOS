@@ -1,0 +1,6 @@
+{
+    "cloud_url": "wss://your-cloud.com/hub",
+    "jwt_token": "your-jwt-token-here",
+    "sync_interval_seconds": 60,
+    "offline_cache_enabled": true
+}

@@ -16,19 +16,22 @@ sys.path.insert(0, str(Path(__file__).parent))
 from protocol import EdgeProtocol
 from sync_engine import SyncEngine
 
+# 目录初始化（必须在 logging 之前）
+CONFIG_PATH = Path.home() / ".clawshell-local" / "config" / "cloud.json"
+STATE_DIR = Path.home() / ".clawshell-local" / "state"
+LOGS_DIR = Path.home() / ".clawshell-local" / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler(os.path.expanduser("~/.clawshell-local/logs/gateway.log")),
+        logging.FileHandler(LOGS_DIR / "gateway.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger("edge-gateway")
-
-CONFIG_PATH = Path.home() / ".clawshell-local" / "config" / "cloud.json"
-STATE_DIR = Path.home() / ".clawshell-local" / "state"
-STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_config() -> dict:

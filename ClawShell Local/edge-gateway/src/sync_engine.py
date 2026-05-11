@@ -96,14 +96,48 @@ class SyncEngine:
         elif category == "skill":
             await self._apply_skill_change(action, data)
 
+    def _write_conflict(self, category: str, entity_id: str,
+                         local_ver: int, cloud_ver: int, resolution: str):
+        """写入冲突日志"""
+        import datetime
+        entry = {
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "category": category,
+            "entity_id": entity_id,
+            "local_version": local_ver,
+            "cloud_version": cloud_ver,
+            "resolution": resolution
+        }
+        with open(self.conflict_file, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        logger.warning(f"冲突记录: {category}/{entity_id} local={local_ver} cloud={cloud_ver} → {resolution}")
+
     async def _apply_memory_change(self, action: str, data: dict):
         logger.debug(f"记忆变更: {action}")
+        # 离线队列：写入 pending
+        await self._offline_safe(self.protocol, "memory", action, data)
 
     async def _apply_kanban_change(self, action: str, data: dict):
         logger.debug(f"看板变更: {action}")
+        # 云端权威：版本冲突时以云端为准
+        entity_id = data.get("task_id") or data.get("board_id", "unknown")
+        local_ver = data.get("version", 0)
+        cloud_ver = data.get("cloud_version", 0)
+        if cloud_ver > local_ver:
+            self._write_conflict("kanban", entity_id, local_ver, cloud_ver, "cloud_wins")
+        await self._offline_safe(self.protocol, "kanban", action, data)
 
     async def _apply_skill_change(self, action: str, data: dict):
         logger.debug(f"技能变更: {action}")
+        await self._offline_safe(self.protocol, "skill", action, data)
+
+    async def _offline_safe(self, protocol, category: str, action: str, data: dict):
+        """离线安全：网络不可用时写入 pending queue"""
+        try:
+            await protocol.call_mcp(f"{category}.{action}", data)
+        except Exception:
+            # 网络不可用，加入本地队列
+            self.queue_operation(category, action, data)
 
     def queue_operation(self, category: str, action: str, data: dict):
         """将操作加入待同步队列（离线时调用）"""

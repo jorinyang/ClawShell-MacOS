@@ -1,0 +1,13 @@
+---
+# ClawShell Cloud — 完整部署 Playbook
+- name: Deploy ClawShell Cloud
+  hosts: clawshell_cloud
+  gather_facts: true
+  become: true
+
+  roles:
+    - role: docker
+    - role: cloud-hub
+    - role: skill-registry
+    - role: kanban
+    - role: nginx

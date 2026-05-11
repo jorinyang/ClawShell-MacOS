@@ -1,0 +1,17 @@
+---
+# Ansible Role: skill-registry
+- name: Create skill-registry directories
+  file:
+    path: /opt/clawshell/skill-registry
+    state: directory
+
+- name: Copy skill-registry files
+  copy:
+    src: "{{ playbook_dir }}/../../skill-registry/"
+    dest: /opt/clawshell/skill-registry/
+
+- name: Set REGISTRY_DB_PATH
+  lineinfile:
+    path: /opt/clawshell/skill-registry/.env
+    line: "REGISTRY_DB_PATH=/data/registry.db"
+    create: true

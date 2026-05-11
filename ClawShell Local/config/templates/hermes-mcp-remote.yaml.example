@@ -1,0 +1,7 @@
+# Hermes MCP Remote 配置示例
+mcp_remotes:
+  clawshell-cloud:
+    url: wss://your-cloud.com/hub
+    auth_token: your-jwt-token
+    timeout: 30
+    retry_attempts: 3

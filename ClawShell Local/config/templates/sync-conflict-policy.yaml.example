@@ -1,0 +1,12 @@
+# 同步冲突策略配置
+conflict_policy:
+  # 冲突时以哪方为准: cloud_wins | local_wins | ask_user
+  kanban: cloud_wins
+  skill: cloud_wins
+  memory: local_wins
+
+  # 冲突记录文件
+  log_file: ~/.clawshell-local/sync/conflict_log.jsonl
+
+  # 冲突历史保留条数（0=无限）
+  max_history: 1000

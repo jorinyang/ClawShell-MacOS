@@ -1,0 +1,7 @@
+# OpenClaw MCP Remote 配置示例
+mcp_remotes:
+  clawshell-cloud:
+    type: websocket
+    url: wss://your-cloud.com/hub
+    headers:
+      Authorization: "Bearer your-jwt-token"

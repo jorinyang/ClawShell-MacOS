@@ -1,0 +1,22 @@
+---
+# Ansible Role: nginx
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+
+- name: Copy nginx config
+  copy:
+    src: "{{ playbook_dir }}/../../nginx/nginx.conf"
+    dest: /etc/nginx/sites-available/clawshell
+
+- name: Enable clawshell site
+  file:
+    src: /etc/nginx/sites-available/clawshell
+    dest: /etc/nginx/sites-enabled/clawshell
+    state: link
+
+- name: Test and reload nginx
+  service:
+    name: nginx
+    state: reloaded

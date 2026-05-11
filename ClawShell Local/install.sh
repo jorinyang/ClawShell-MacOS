@@ -48,7 +48,7 @@ fi
 # Step 4: 生态组件安装
 echo -e "${GREEN}[4/7] 生态组件安装...${NC}"
 if [[ -x "$SCRIPT_DIR/scripts/install-ecosystem.sh" ]]; then
-    bash "$SCRIPT_DIR/scripts/install-ecosystem.sh
+    bash "$SCRIPT_DIR/scripts/install-ecosystem.sh"
 else
     echo -e "${YELLOW}  install-ecosystem.sh 未找到，跳过${NC}"
 fi
@@ -56,7 +56,7 @@ fi
 # Step 5: Edge Gateway 安装
 echo -e "${GREEN}[5/7] 安装 Edge Gateway...${NC}"
 if [[ -x "$SCRIPT_DIR/scripts/setup-edge-gateway.sh" ]]; then
-    bash "$SCRIPT_DIR/scripts/setup-edge-gateway.sh
+    bash "$SCRIPT_DIR/scripts/setup-edge-gateway.sh"
 else
     echo -e "${YELLOW}  setup-edge-gateway.sh 未找到，跳过${NC}"
 fi
