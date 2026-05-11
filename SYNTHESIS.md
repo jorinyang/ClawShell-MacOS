@@ -1,8 +1,9 @@
-# ClawShell v2.0 — 综合迭代规划
+# ClawShell v1.8 — Phase B 完成状态
 
 > 基于 ClawShell-Windows (v1.0) 和 ClawShell-MacOS (v1.3) 的全方位融合
-> 版本：v2.0-draft
+> 版本：v1.8
 > 更新：2026-05-12
+> 状态：**Phase B 完成**（Local EventBus ✅ + Edge SelfHealing ✅）
 
 ---
 
@@ -282,12 +283,31 @@ Edge 的 EventBus 是**轻量版**，不复制 Windows 的全部 9 个 eventbus 
 
 ## 8. 验收标准
 
+### Phase A（Cloud 侧）— ✅ 已完成
 - [x] CloudHub 导入新增 Domain 无循环依赖
 - [x] GenomeDomain.genome_import → EventStore 持久化
 - [x] AdaptiveDomain.rule_evaluate → JSON 条件规则求值
 - [x] SwarmDomain.trust_evaluate → 节点信任分计算
-- [x] Edge Local EventBus → SyncEngine 集成（本地事件同步到云端）
 - [x] WorkflowEngine saga 补偿自动执行
-- [x] 所有新增模块单元测试通过
+- [x] 所有新增模块单元测试通过（89/89）
+
+### Phase B（Edge 侧）— ✅ v1.8 完成
+- [x] **B1: Local EventBus**（edge-gateway/src/eventbus/）
+  - [x] core.py: pub/sub + 持久化 + DLQ（287行）
+  - [x] schema.py: Event/EventType/EventFilter（200行）
+  - [x] dead_letter_queue.py: 死信队列（224行）
+  - [x] event_tracer.py: 事件追踪（202行）
+  - [x] condition_engine.py: 简化条件引擎（194行）
+  - [x] 与 SyncEngine 集成：publish() 自动调用 queue_event()
+- [x] **B2: Edge SelfHealing**（edge-gateway/src/edge_self_healing.py）
+  - [x] 心跳驱动（无 cron，30s 间隔线程）
+  - [x] 超时检测（120s → 触发降级）
+  - [x] 定期检查点（每小时）
+  - [x] 关键配置备份
+  - [x] 与 EventBus 集成（订阅 heartbeat，发布 healing.* 事件）
+  - [x] gateway.py 集成 EventBus + EdgeSelfHealing
+- [x] **/health 端点**（docker-compose healthcheck）
+
+### Phase D（文档与部署）— 待完成
 - [ ] Docker Compose 部署成功
-- [ ] Git tag v2.0 推送完成
+- [ ] Git tag v2.0 推送完成（等待 Phase D 完成后）
