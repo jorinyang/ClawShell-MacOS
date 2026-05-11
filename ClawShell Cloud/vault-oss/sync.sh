@@ -294,8 +294,8 @@ init_remote() {
   echo "创建 rclone remote '${REMOTE}' ..."
   rclone config create "${REMOTE}" s3 \
     provider Alibaba \
-    access_key_id "${OSS_ACCESS_KEY_ID:-LTAI5t65mdkcafmDDmZZbfsJ}" \
-    secret_access_key "${OSS_ACCESS_KEY_SECRET:-shY3MbwATWlMOjQo5BfuBFoPcsBZPz}" \
+    access_key_id "${OSS_ACCESS_KEY_ID}" \
+    secret_access_key "${OSS_ACCESS_KEY_SECRET}" \
     endpoint "${OSS_ENDPOINT:-oss-cn-hongkong.aliyuncs.com}" \
     acl private \
     region cn-hongkong
