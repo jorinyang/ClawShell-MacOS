@@ -119,6 +119,32 @@ async def main():
     hub_instance.quality_evaluator = QualityEvaluator()
     hub_instance.self_healing = SelfHealingEngine()
     hub_instance.trust_manager = TrustManager()
+    from src.event_store.relation_engine import RelationEngine
+    from src.event_store.semantic_search import SemanticSearch
+    from src.event_store.metadata_index import MetadataIndex
+    from src.event_store.priority_queue import PriorityQueue, Priority
+    from src.event_store.condition_engine import ConditionEngine, Condition, Rule
+    from src.event_store.ml_engine import MLEngine
+    from src.event_store.strategy_registry import StrategyRegistry, Strategy
+    from src.event_store.strategy_switcher import StrategySwitcher
+    from src.domains.failure_detector import FailureDetector, FailureType
+    from src.domains.swarm_discovery import SwarmDiscovery
+    from src.domains.metrics_collector import MetricsCollector, PerformanceMetrics
+    from src.domains.skill_market import SkillMarket, MarketSkill
+    from src.domains.adaptive_controller import AdaptiveController
+    hub_instance.relation_engine = RelationEngine()
+    hub_instance.semantic_search = SemanticSearch()
+    hub_instance.metadata_index = MetadataIndex()
+    hub_instance.priority_queue = PriorityQueue()
+    hub_instance.condition_engine = ConditionEngine()
+    hub_instance.ml_engine = MLEngine()
+    hub_instance.strategy_registry = StrategyRegistry()
+    hub_instance.strategy_switcher = StrategySwitcher(hub_instance.strategy_registry)
+    hub_instance.failure_detector = FailureDetector()
+    hub_instance.swarm_discovery = SwarmDiscovery("cloud-hub")
+    hub_instance.metrics_collector = MetricsCollector()
+    hub_instance.skill_market = SkillMarket()
+    hub_instance.adaptive_controller = AdaptiveController()
 
     print("Hub ready. Running tests...\n")
 
@@ -367,6 +393,123 @@ async def main():
 
     r = hub_instance._quality_stats({})
     check("Quality: stats", r.get("success"))
+
+    # ── Phase 3: Relation Engine ─────────────────────────────────────
+    re_ = hub_instance.relation_engine
+    re_.add_relation("cause_effect", "fire", "smoke")
+    re_.add_relation("cause_effect", "smoke", "alarm")
+    causes = re_.find_causes("alarm")
+    check("Rel: causes", len(causes) >= 1)
+    transitive = re_.transitive_inference("fire", "cause_effect")
+    check("Rel: transitive", "smoke" in transitive)
+    stats = re_.get_stats()
+    check("Rel: stats", stats.get("total_relations", 0) >= 2)
+
+    # ── Phase 3: Semantic Search ──────────────────────────────────────
+    ss = hub_instance.semantic_search
+    ss.index_document("doc1", "AI agents framework for automation")
+    ss.index_document("doc2", "Machine learning model training")
+    r = ss.search("AI framework")
+    check("Semantic: search", len(r) >= 1)
+    r = ss.get_similar("doc1")
+    check("Semantic: similar", isinstance(r, list))
+    r = ss.get_stats()
+    check("Semantic: stats", r.get("total_documents", 0) >= 2)
+
+    # ── Phase 3: Metadata Index ───────────────────────────────────────
+    mi = hub_instance.metadata_index
+    mi.add("ent1", "service", "status", "healthy")
+    mi.add("ent1", "service", "uptime", 99.5)
+    r = mi.search("status", "healthy")
+    check("Meta: search", len(r) >= 1)
+    r = mi.get_entity_metadata("ent1")
+    check("Meta: entity", len(r) >= 2)
+    r = mi.get_stats()
+    check("Meta: stats", r.get("total_entries", 0) >= 2)
+
+    # ── Phase 3: Priority Queue ──────────────────────────────────────
+    pq = hub_instance.priority_queue
+    iid = pq.enqueue({"task": "test"}, priority=Priority.HIGH)
+    check("PQ: enqueue", iid is not None)
+    item = pq.dequeue()
+    check("PQ: dequeue", item is not None)
+    r = pq.stats()
+    check("PQ: stats", isinstance(r, dict))
+
+    # ── Phase 3: Condition Engine ────────────────────────────────────
+    ce = hub_instance.condition_engine
+    cond = Condition(type="threshold", metric="error_rate", operator=">", threshold=0.1)
+    ce.add_rule(Rule(rule_id="rule1", name="high_error", condition=cond))
+    r = ce.evaluate("rule1", 0.05)
+    check("Cond: evaluate false", r == False)
+    r = ce.evaluate("rule1", 0.2)
+    check("Cond: evaluate true", r == True)
+    r = ce.get_stats()
+    check("Cond: stats", r.get("total_rules", 0) >= 1)
+
+    # ── Phase 3: ML Engine ──────────────────────────────────────────
+    ml = hub_instance.ml_engine
+    # ML z-score params include the outlier itself → use large value to exceed threshold
+    for v in [1.0, 1.2, 0.9, 1.1, 1.3, 1.0]:
+        ml.add_sample("latency", v)
+    anomaly = ml.detect_anomaly("latency", 500.0)  # far outside normal range
+    check("ML: anomaly detected", anomaly is not None)
+    trend = ml.predict_trend("latency")
+    check("ML: trend predicted", trend is not None)
+    r = ml.find_root_cause("latency", ["cpu", "memory"])
+    check("ML: root cause", isinstance(r, list))
+
+    # ── Phase 4: Strategy ─────────────────────────────────────────────
+    sr = hub_instance.strategy_registry
+    ss2 = hub_instance.strategy_switcher
+    sr.register(Strategy(name="performance", strategy_type="optimization", config={"target": 0.01}))
+    ss2.set_active("performance")
+    check("Strategy: set_active", ss2.get_active() == "performance")
+    check("Strategy: list", len(sr.list_all()) >= 1)
+
+    # ── Phase 4: Failure Detector ────────────────────────────────────
+    fd = hub_instance.failure_detector
+    fd.set_threshold("node-a", 2)
+    fd.record("node-a", FailureType.ERROR, "test error")
+    alert2 = fd.record("node-a", FailureType.ERROR, "test error 2")
+    check("Failure: alert triggered", alert2 is not None)
+    fd.record_success("node-a")
+    r = fd.get_stats()
+    check("Failure: stats", r.get("total_records", 0) >= 2)
+
+    # ── Phase 4: Swarm Discovery ──────────────────────────────────────
+    sd = hub_instance.swarm_discovery
+    sd.announce("192.168.1.10", 9999, {"role": "worker"})
+    r = sd.get_stats()
+    check("Discovery: announce", r.get("node_id", "") != "")
+
+    # ── Phase 4: Metrics Collector ───────────────────────────────────
+    mc = hub_instance.metrics_collector
+    m = PerformanceMetrics(node_id="node-x", timestamp=time.time(),
+                          requests_total=100, requests_success=95, avg_response_time_ms=50)
+    mc.record("node-x", m)
+    r = mc.get_aggregated("node-x")
+    check("MetricsColl: aggregated", r.get("total_requests", 0) == 100)
+
+    # ── Phase 4: Skill Market ─────────────────────────────────────────
+    sm = hub_instance.skill_market
+    sid = sm.publish(MarketSkill(
+        skill_id="", name="test-skill", version="1.0.0",
+        description="A test skill", content="print('hello')",
+        author="tester", tags=["test"], category="utility"))
+    check("Skill: publish", sid is not None)
+    results2 = sm.discover("test")
+    check("Skill: discover", len(results2) >= 1)
+    r = sm.get_stats()
+    check("Skill: stats", r.get("total_skills", 0) >= 1)
+
+    # ── Phase 4: Adaptive Controller ──────────────────────────────────
+    ac = hub_instance.adaptive_controller
+    ac.set_threshold("cpu_percent", warn=70, critical=90, target=50)
+    signals = ac.record(cpu=85)
+    check("Adaptive: threshold breach", len(signals) >= 1)
+    r = ac.get_stats()
+    check("Adaptive: stats", r.get("snapshots", 0) >= 1)
 
     # ── Summary ────────────────────────────────────────────────────────────────
     passed = sum(1 for s, _, _ in results if s == "PASS")

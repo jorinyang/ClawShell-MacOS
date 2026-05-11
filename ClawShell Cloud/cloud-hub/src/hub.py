@@ -106,6 +106,20 @@ class CloudHub:
         from .event_store.quality_evaluator import QualityEvaluator
         from .domains.self_healing import SelfHealingEngine
         from .domains.trust_manager import TrustManager
+        from .domains.failure_detector import FailureDetector
+        from .domains.swarm_discovery import SwarmDiscovery
+        from .domains.metrics_collector import MetricsCollector
+        from .domains.skill_market import SkillMarket
+        from .domains.adaptive_controller import AdaptiveController
+        from .event_store.relation_engine import RelationEngine
+        from .event_store.semantic_search import SemanticSearch
+        from .event_store.metadata_index import MetadataIndex
+        from .event_store.priority_queue import PriorityQueue
+        from .event_store.lifecycle_hooks import MemPalaceHook
+        from .event_store.condition_engine import ConditionEngine
+        from .event_store.ml_engine import MLEngine
+        from .event_store.strategy_registry import StrategyRegistry
+        from .event_store.strategy_switcher import StrategySwitcher
         self.knowledge_graph = KnowledgeGraph()
         self.pattern_miner = PatternMiner()
         self.dlq = DeadLetterQueue()
@@ -115,6 +129,20 @@ class CloudHub:
         self.quality_evaluator = QualityEvaluator()
         self.self_healing = SelfHealingEngine()
         self.trust_manager = TrustManager()
+        self.failure_detector = FailureDetector()
+        self.swarm_discovery = SwarmDiscovery(node_id=f"cloud-{uuid.uuid4().hex[:8]}")
+        self.metrics_collector = MetricsCollector()
+        self.skill_market = SkillMarket()
+        self.adaptive_controller = AdaptiveController()
+        self.relation_engine = RelationEngine()
+        self.semantic_search = SemanticSearch()
+        self.metadata_index = MetadataIndex()
+        self.priority_queue = PriorityQueue()
+        self.lifecycle_hooks = MemPalaceHook()
+        self.condition_engine = ConditionEngine()
+        self.ml_engine = MLEngine()
+        self.strategy_registry = StrategyRegistry()
+        self.strategy_switcher = StrategySwitcher(self.strategy_registry)
 
         # JWT
         self.jwt_secret = os.environ.get("JWT_SECRET", "change-me-in-production")
@@ -767,6 +795,215 @@ class CloudHub:
             return {"success": True, "score": score.to_dict()}
         if method == "quality_stats":
             return {"success": True, "stats": self.quality_evaluator.get_stats()}
+
+        # Phase 3: Relation Engine
+        if method == "rel_add":
+            rel = self.relation_engine.add_relation(
+                params.get("relation_type", ""), params.get("source", ""),
+                params.get("target", ""), params.get("confidence", 1.0))
+            return {"success": True, "relation": rel.to_dict()}
+        if method == "rel_opposite":
+            return {"success": True, "result": self.relation_engine.find_opposite(params.get("entity", ""))}
+        if method == "rel_causes":
+            return {"success": True, "result": self.relation_engine.find_causes(params.get("entity", ""))}
+        if method == "rel_transitive":
+            return {"success": True, "result": list(
+                self.relation_engine.transitive_inference(params.get("entity", ""),
+                                                        params.get("relation_type", "cause_effect")))}
+        if method == "rel_deduce":
+            return {"success": True, "result": self.relation_engine.deduce_from_opposites(params.get("entity", ""))}
+        if method == "rel_stats":
+            return {"success": True, "stats": self.relation_engine.get_stats()}
+
+        # Phase 3: Semantic Search
+        if method == "semantic_index":
+            self.semantic_search.index_document(params.get("entity_id", ""),
+                                             params.get("text", ""),
+                                             params.get("metadata"))
+            return {"success": True}
+        if method == "semantic_search":
+            results = self.semantic_search.search(params.get("query", ""),
+                                               top_k=params.get("top_k", 10))
+            return {"success": True, "results": [
+                {"entity_id": r.entity_id, "score": r.score,
+                 "highlights": r.highlights} for r in results]}
+        if method == "semantic_similar":
+            return {"success": True, "results": self.semantic_search.get_similar(
+                params.get("entity_id", ""), params.get("top_k", 5))}
+        if method == "semantic_stats":
+            return {"success": True, "stats": self.semantic_search.get_stats()}
+
+        # Phase 3: Metadata Index
+        if method == "meta_add":
+            entry = self.metadata_index.add(params.get("entity_id", ""),
+                                          params.get("entity_type", ""),
+                                          params.get("key", ""),
+                                          params.get("value"))
+            return {"success": True, "entry": entry.to_dict()}
+        if method == "meta_search":
+            results = self.metadata_index.search(params.get("key", ""),
+                                               params.get("value"))
+            return {"success": True, "results": [r.to_dict() for r in results]}
+        if method == "meta_range":
+            results = self.metadata_index.range_query(params.get("key", ""),
+                                                     min_val=params.get("min"),
+                                                     max_val=params.get("max"))
+            return {"success": True, "results": [r.to_dict() for r in results]}
+        if method == "meta_entity":
+            return {"success": True, "results": [
+                r.to_dict() for r in self.metadata_index.get_entity_metadata(params.get("entity_id", ""))]}
+        if method == "meta_stats":
+            return {"success": True, "stats": self.metadata_index.get_stats()}
+
+        # Phase 3: Priority Queue
+        if method == "pq_enqueue":
+            from .event_store.priority_queue import Priority
+            p = getattr(Priority, params.get("priority", "NORMAL"), Priority.NORMAL)
+            item_id = self.priority_queue.enqueue(params.get("payload", {}),
+                                                priority=p,
+                                                timeout=params.get("timeout", 0))
+            return {"success": True, "item_id": item_id}
+        if method == "pq_dequeue":
+            item = self.priority_queue.dequeue()
+            return {"success": True, "item": item.to_dict() if item else None}
+        if method == "pq_stats":
+            return {"success": True, "stats": self.priority_queue.stats()}
+
+        # Phase 3: Condition Engine
+        if method == "cond_add_rule":
+            from .event_store.condition_engine import Condition, Rule
+            rule = Rule(rule_id=params.get("rule_id", f"rule_{int(time.time()*1000)}"),
+                       name=params.get("name", ""),
+                       condition=Condition(**params.get("condition", {})))
+            self.condition_engine.add_rule(rule)
+            return {"success": True, "rule_id": rule.rule_id}
+        if method == "cond_evaluate":
+            result = self.condition_engine.evaluate(params.get("rule_id", ""),
+                                                  params.get("value", 0))
+            return {"success": True, "result": result}
+        if method == "cond_stats":
+            return {"success": True, "stats": self.condition_engine.get_stats()}
+
+        # Phase 3: ML Engine
+        if method == "ml_add_sample":
+            self.ml_engine.add_sample(params.get("metric", ""), params.get("value", 0.0))
+            return {"success": True}
+        if method == "ml_detect_anomaly":
+            result = self.ml_engine.detect_anomaly(params.get("metric", ""),
+                                                  params.get("value", 0.0),
+                                                  threshold=params.get("threshold", 3.0))
+            return {"success": True, "anomaly": result.to_dict() if result else None}
+        if method == "ml_predict":
+            result = self.ml_engine.predict_trend(params.get("metric", ""),
+                                                steps=params.get("steps", 1))
+            return {"success": True, "trend": result.__dict__ if result else None}
+        if method == "ml_find_root_cause":
+            return {"success": True, "causes": self.ml_engine.find_root_cause(
+                params.get("symptom_metric", ""),
+                params.get("candidate_metrics", []))}
+        if method == "ml_stats":
+            return {"success": True, "anomalies_count": len(self.ml_engine._anomalies)}
+
+        # Phase 4: Strategy
+        if method == "strategy_register":
+            from .event_store.strategy_registry import Strategy
+            s = Strategy(name=params.get("name", ""),
+                        strategy_type=params.get("strategy_type", ""),
+                        config=params.get("config", {}),
+                        description=params.get("description", ""))
+            self.strategy_registry.register(s)
+            return {"success": True, "name": s.name}
+        if method == "strategy_list":
+            return {"success": True, "strategies": [
+                s.to_dict() for s in self.strategy_registry.list_all()]}
+        if method == "strategy_set_active":
+            self.strategy_switcher.set_active(params.get("name", ""))
+            return {"success": True}
+        if method == "strategy_get_active":
+            return {"success": True, "active": self.strategy_switcher.get_active()}
+
+        # Phase 4: Failure Detector
+        if method == "failure_record":
+            from .domains.failure_detector import FailureType
+            ft = getattr(FailureType, params.get("failure_type", "ERROR").upper(),
+                        FailureType.ERROR)
+            alert = self.failure_detector.record(params.get("node_id", ""),
+                                               ft, params.get("details", ""))
+            return {"success": True, "alert": alert.__dict__ if alert else None}
+        if method == "failure_resolve":
+            count = self.failure_detector.resolve(params.get("node_id", ""))
+            return {"success": True, "resolved": count}
+        if method == "failure_stats":
+            return {"success": True, "stats": self.failure_detector.get_stats()}
+
+        # Phase 4: Swarm Discovery
+        if method == "discovery_announce":
+            self.swarm_discovery.announce(params.get("addr", "localhost"),
+                                       params.get("port", 9999),
+                                       params.get("metadata"))
+            return {"success": True}
+        if method == "discovery_peers":
+            return {"success": True, "peers": [
+                {"node_id": p.node_id, "addr": p.addr, "port": p.port}
+                for p in self.swarm_discovery.get_peers()]}
+        if method == "discovery_stats":
+            return {"success": True, "stats": self.swarm_discovery.get_stats()}
+
+        # Phase 4: Metrics Collector
+        if method == "swarm_metrics_record":
+            from .domains.metrics_collector import PerformanceMetrics
+            m = PerformanceMetrics(node_id=params.get("node_id", ""),
+                                  timestamp=time.time(),
+                                  requests_total=params.get("requests_total", 0),
+                                  requests_success=params.get("requests_success", 0),
+                                  avg_response_time_ms=params.get("avg_response_time_ms", 0))
+            self.metrics_collector.record(params.get("node_id", ""), m)
+            return {"success": True}
+        if method == "swarm_metrics_agg":
+            return {"success": True, "stats": self.metrics_collector.get_aggregated(
+                params.get("node_id", ""))}
+        if method == "swarm_metrics_top":
+            return {"success": True, "top": self.metrics_collector.get_top_by_success_rate(
+                limit=params.get("limit", 5))}
+
+        # Phase 4: Skill Market
+        if method == "skill_publish":
+            from .domains.skill_market import MarketSkill
+            s = MarketSkill(skill_id=params.get("skill_id", ""),
+                           name=params.get("name", ""),
+                           version=params.get("version", "1.0.0"),
+                           description=params.get("description", ""),
+                           content=params.get("content", ""),
+                           author=params.get("author", ""),
+                           tags=params.get("tags", []),
+                           category=params.get("category", "general"))
+            sid = self.skill_market.publish(s)
+            return {"success": True, "skill_id": sid}
+        if method == "skill_discover":
+            results = self.skill_market.discover(params.get("query", ""),
+                                               limit=params.get("limit", 10))
+            return {"success": True, "skills": [s.to_dict() for s in results]}
+        if method == "skill_stats":
+            return {"success": True, "stats": self.skill_market.get_stats()}
+
+        # Phase 4: Adaptive Controller
+        if method == "adaptive_record":
+            signals = self.adaptive_controller.record(
+                cpu=params.get("cpu_percent", 0),
+                memory=params.get("memory_percent", 0),
+                response_time=params.get("response_time", 0),
+                error_rate=params.get("error_rate", 0),
+                throughput=params.get("throughput", 0))
+            return {"success": True, "signals": [s.__dict__ for s in signals]}
+        if method == "adaptive_set_threshold":
+            self.adaptive_controller.set_threshold(
+                params.get("metric", ""),
+                warn=params.get("warn", 0),
+                critical=params.get("critical", 0),
+                target=params.get("target"))
+            return {"success": True}
+        if method == "adaptive_stats":
+            return {"success": True, "stats": self.adaptive_controller.get_stats()}
 
         # ── 未知 method ──────────────────────────────────────────────────────
         return {"error": f"Method not found: {method}", "code": -32601}
