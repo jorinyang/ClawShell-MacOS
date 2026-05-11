@@ -1,6 +1,12 @@
 """
-ClawShell Edge Gateway — Sync Engine
-增量同步：pending_operations 队列 + delta pull/push
+ClawShell Edge Gateway — Sync Engine v1.3
+增量同步 + 事件驱动协同
+
+新增 v1.3 能力：
+- pending_operations 队列（离线操作）
+- Event Replay Queue（离线期间 cloud-hub 推送的事件缓存）
+- 冲突仲裁（云端权威 + 版本号）
+- reconnect 后 replay 补齐离线窗口
 """
 import asyncio
 import json
@@ -8,7 +14,7 @@ import logging
 import os
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("edge-gateway.sync")
 
@@ -33,6 +39,91 @@ class SyncEngine:
 
     def _set_last_sync(self, ts: str):
         self.last_sync_file.write_text(ts)
+
+    # ─── Event Replay Queue（v1.3 新增）─────────────────────────────────────
+    # 离线期间 cloud-hub 推送的事件暂存这里，reconnect 后 replay 补齐
+
+    def get_replay_queue_path(self) -> Path:
+        return self.sync_dir / "event_replay_queue.jsonl"
+
+    def queue_event(self, event: Dict[str, Any]) -> None:
+        """将事件加入 replay 队列（离线时调用）"""
+        with open(self.get_replay_queue_path(), "a") as f:
+            f.write(json.dumps(event) + "\n")
+        logger.debug(f"Event queued for replay: {event.get('topic')}")
+
+    def get_queued_events(self) -> List[Dict[str, Any]]:
+        """获取所有待 replay 的事件"""
+        path = self.get_replay_queue_path()
+        if not path.exists():
+            return []
+        events = []
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        events.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        return events
+
+    def clear_replay_queue(self) -> None:
+        """清空 replay 队列（replay 成功后调用）"""
+        path = self.get_replay_queue_path()
+        if path.exists():
+            path.unlink()
+        logger.debug("Replay queue cleared")
+
+    def get_last_seq(self) -> int:
+        """获取本端已处理的最大序列号"""
+        seq_file = self.sync_dir / "last_seq.txt"
+        if seq_file.exists():
+            try:
+                return int(seq_file.read_text().strip())
+            except ValueError:
+                return 0
+        return 0
+
+    def set_last_seq(self, seq: int) -> None:
+        """更新已处理的序列号"""
+        seq_file = self.sync_dir / "last_seq.txt"
+        seq_file.write_text(str(seq))
+
+    # ─── 冲突仲裁（v1.3 扩展）───────────────────────────────────────────────
+
+    def resolve_conflict(self, category: str, entity_id: str,
+                        local_ver: int, cloud_ver: int,
+                        local_data: Any, cloud_data: Any) -> Dict[str, Any]:
+        """
+        冲突解决策略：
+        - kanban: 云端权威（last-write-wins with version check）
+        - skill: 版本号比对，提示用户手动选择
+        - memory: 云端权威（Memos 结构化数据）
+        - workflow: 云端权威
+
+        返回: {"resolution": "cloud_wins" | "local_wins" | "manual",
+               "winning_data": ...}
+        """
+        if category == "kanban":
+            # 云端权威
+            self._write_conflict(category, entity_id, local_ver, cloud_ver, "cloud_wins")
+            return {"resolution": "cloud_wins", "winning_data": cloud_data}
+        elif category == "skill":
+            if cloud_ver >= local_ver:
+                self._write_conflict(category, entity_id, local_ver, cloud_ver, "cloud_wins")
+                return {"resolution": "cloud_wins", "winning_data": cloud_data}
+            else:
+                self._write_conflict(category, entity_id, local_ver, cloud_ver, "local_wins")
+                return {"resolution": "local_wins", "winning_data": local_data}
+        elif category == "memory":
+            self._write_conflict(category, entity_id, local_ver, cloud_ver, "cloud_wins")
+            return {"resolution": "cloud_wins", "winning_data": cloud_data}
+        else:
+            self._write_conflict(category, entity_id, local_ver, cloud_ver, "cloud_wins")
+            return {"resolution": "cloud_wins", "winning_data": cloud_data}
+
+    # ─── 离线操作（原有能力保留）─────────────────────────────────────────────
 
     async def full_sync(self):
         """完整同步：push pending → pull delta"""

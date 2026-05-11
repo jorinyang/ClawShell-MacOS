@@ -31,7 +31,10 @@ from aiohttp import web
 from websockets.server import WebSocketServerProtocol
 
 from .auth import create_token, create_refresh_token, verify_token
-from .domains import MemoryDomain, KanbanDomain, SkillDomain, NodeDomain
+from .domains import (
+    MemoryDomain, KanbanDomain, SkillDomain, NodeDomain,
+    WorkflowDomain, GenomeDomain, AdaptiveDomain, SwarmDomain,
+)
 from .event_store.schema import (
     Event, Topic, node_state_topic,
     SkillRegisteredEvent, TaskCreatedEvent,
@@ -87,6 +90,10 @@ class CloudHub:
         self.kanban_domain = KanbanDomain(self.store)
         self.skill_domain = SkillDomain(self.store)
         self.memory_domain = MemoryDomain(self.store)
+        self.workflow_domain = WorkflowDomain(self.store, self.pubsub)
+        self.genome_domain = GenomeDomain(self.store, self.pubsub)
+        self.adaptive_domain = AdaptiveDomain(self.store, self.pubsub)
+        self.swarm_domain = SwarmDomain(self.store, self.pubsub)
 
         # JWT
         self.jwt_secret = os.environ.get("JWT_SECRET", "change-me-in-production")
@@ -577,6 +584,78 @@ class CloudHub:
 
         if method == "vault_list":
             return await self.store.vault_list(params.get("prefix", ""))
+
+        # ── Workflow Domain ──────────────────────────────────────────────────
+        if method == "workflow_define":
+            return await self.workflow_domain.workflow_define(params)
+
+        if method == "workflow_get":
+            return await self.workflow_domain.workflow_get(params)
+
+        if method == "workflow_execute":
+            r = await self.workflow_domain.workflow_execute(params)
+            return r
+
+        if method == "workflow_status":
+            return await self.workflow_domain.workflow_status(params)
+
+        if method == "workflow_cancel":
+            return await self.workflow_domain.workflow_cancel(params)
+
+        if method == "workflow_list":
+            return await self.workflow_domain.workflow_list(params)
+
+        if method == "workflow_wait":
+            return await self.workflow_domain.workflow_wait(params)
+
+        if method == "workflow_confirm":
+            return await self.workflow_domain.workflow_confirm(params)
+
+        # ── Genome Domain ───────────────────────────────────────────────────
+        if method == "genome_get":
+            return await self.genome_domain.genome_get(params)
+        if method == "knowledge_add":
+            return await self.genome_domain.knowledge_add(params)
+        if method == "knowledge_query":
+            return await self.genome_domain.knowledge_query(params)
+        if method == "error_pattern_add":
+            return await self.genome_domain.error_pattern_add(params)
+        if method == "error_resolve":
+            return await self.genome_domain.error_resolve(params)
+        if method == "skill_update":
+            return await self.genome_domain.skill_update(params)
+        if method == "evolve":
+            return await self.genome_domain.evolve(params)
+        if method == "heritage":
+            return await self.genome_domain.heritage(params)
+        if method == "genome_stats":
+            return await self.genome_domain.genome_stats(params)
+
+        # ── Adaptive Domain ─────────────────────────────────────────────────
+        if method == "health_check":
+            return await self.adaptive_domain.health_check(params)
+        if method == "rule_evaluate":
+            return await self.adaptive_domain.rule_evaluate(params)
+        if method == "strategy_switch":
+            return await self.adaptive_domain.strategy_switch(params)
+        if method == "system_heal":
+            return await self.adaptive_domain.system_heal(params)
+        if method == "get_current_strategy":
+            return await self.adaptive_domain.get_current_strategy(params)
+
+        # ── Swarm Domain ────────────────────────────────────────────────────
+        if method == "swarm_node_register":
+            return await self.swarm_domain.node_register(params)
+        if method == "swarm_node_heartbeat":
+            return await self.swarm_domain.node_heartbeat(params)
+        if method == "swarm_node_unregister":
+            return await self.swarm_domain.node_unregister(params)
+        if method == "swarm_list_nodes":
+            return await self.swarm_domain.list_nodes(params)
+        if method == "swarm_trust_evaluate":
+            return await self.swarm_domain.trust_evaluate(params)
+        if method == "swarm_ecology_match":
+            return await self.swarm_domain.ecology_match(params)
 
         # ── 未知 method ──────────────────────────────────────────────────────
         return {"error": f"Method not found: {method}", "code": -32601}

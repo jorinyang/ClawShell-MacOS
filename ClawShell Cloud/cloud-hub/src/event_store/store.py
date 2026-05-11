@@ -96,7 +96,7 @@ class OssEventStore:
         events: List[Event] = []
         for seq_str in sorted(idx.keys(), key=int):
             seq = int(seq_str)
-            if seq <= since_seq:
+            if seq < since_seq:
                 continue
             if len(events) >= limit:
                 break

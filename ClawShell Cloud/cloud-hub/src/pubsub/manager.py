@@ -55,9 +55,11 @@ class PubSubManager:
     # ─── 订阅管理 ────────────────────────────────────────────────────────────────
 
     async def subscribe(
-        self, conn: Connection, topics: List[str], last_seq: int = 0
+        self, conn: Connection, topics, last_seq: int = 0
     ) -> Subscription:
-        """客户端订阅一组 topics，返回 Subscription 对象"""
+        """客户端订阅 topic(s)。topics 可以是 str 或 List[str]"""
+        if isinstance(topics, str):
+            topics = [topics]
         sub = Subscription(conn, topics, last_seq)
         async with self._lock:
             self._subscriptions.add(sub)

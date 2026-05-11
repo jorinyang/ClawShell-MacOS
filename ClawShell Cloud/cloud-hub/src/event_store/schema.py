@@ -43,6 +43,19 @@ class Topic:
     SYSTEM_RECONNECT = "system.reconnect"  # 广播全局序列号，离线端补齐用
     SYSTEM_BROADCAST = "system.broadcast"  # 任意系统广播
 
+    # 工作流域
+    WORKFLOW_STARTED  = "workflow.started"
+    WORKFLOW_COMPLETED = "workflow.completed"
+    WORKFLOW_FAILED    = "workflow.failed"
+    WORKFLOW_STEP_LOG  = "workflow.step_log"
+
+    # 知识库域
+    KNOWLEDGE_ADDED  = "knowledge.added"
+    KNOWLEDGE_UPDATED = "knowledge.updated"
+
+    # 任务域（补充）
+    TASK_DONE         = "task.done"
+
 
 def node_state_topic(node_id: str) -> str:
     return f"node.state.{node_id}"
