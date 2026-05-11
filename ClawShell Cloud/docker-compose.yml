@@ -9,19 +9,28 @@ services:
     container_name: clawshell-cloud-hub
     ports:
       - "8443:8443"
+      - "8080:8080"
     environment:
       - JWT_SECRET=${JWT_SECRET:?Please set JWT_SECRET}
       - USER_ID=${USER_ID:?Please set USER_ID}
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-}
+      - OSS_BUCKET=${OSS_BUCKET:-}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
+      - OSS_VAULT_PREFIX=${OSS_VAULT_PREFIX:-vault/}
+      - SKILL_URL=ws://skill-registry:8445
+      - KANBAN_URL=ws://kanban:8446
       - LOG_LEVEL=INFO
     volumes:
       - ./cloud-hub/data:/data
       - ./cloud-hub/config.yaml:/app/config.yaml:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import websockets, asyncio; asyncio.run(websockets.connect('ws://localhost:8443'))"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
+      start_period: 10s
     networks:
       - clawshell-net
 
