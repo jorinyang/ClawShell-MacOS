@@ -25,24 +25,6 @@ services:
     networks:
       - clawshell-net
 
-  # MemPalace Cloud — 记忆中枢
-  mempalace:
-    image: python:3.12-slim
-    container_name: clawshell-mempalace
-    working_dir: /app
-    command: >
-      bash -c "pip install mempalace &&
-               python -m mempalace.mcp_server"
-    ports:
-      - "8444:8444"
-    environment:
-      - PALACE_PATH=/data/palace
-    volumes:
-      - ./mempalace-data:/data
-    restart: unless-stopped
-    networks:
-      - clawshell-net
-
   # Skill Registry — 技能注册表
   skill-registry:
     build:

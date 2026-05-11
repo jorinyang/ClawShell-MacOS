@@ -23,9 +23,16 @@ class CloudHub:
         self.clients: Dict[str, WebSocketServerProtocol] = {}
         self.pending_requests: Dict[str, asyncio.Future] = {}
         self.mcp_servers = {
-            "mempalace": os.environ.get("MEMPALACE_URL", "ws://mempalace:8444"),
-            "skill":     os.environ.get("SKILL_URL", "ws://skill-registry:8445"),
-            "kanban":    os.environ.get("KANBAN_URL", "ws://kanban:8446"),
+            "skill":   os.environ.get("SKILL_URL", "ws://skill-registry:8445"),
+            "kanban":  os.environ.get("KANBAN_URL", "ws://kanban:8446"),
+        }
+        # OSS Vault config
+        self.oss_config = {
+            "endpoint": os.environ.get("OSS_ENDPOINT", ""),
+            "bucket": os.environ.get("OSS_BUCKET", ""),
+            "access_key": os.environ.get("OSS_ACCESS_KEY_ID", ""),
+            "secret_key": os.environ.get("OSS_ACCESS_KEY_SECRET", ""),
+            "vault_prefix": os.environ.get("OSS_VAULT_PREFIX", "vault/"),
         }
 
     async def register_client(self, ws: WebSocketServerProtocol, user_id: str):
@@ -103,8 +110,12 @@ class CloudHub:
             req_id = req.get("id", str(uuid.uuid4()))
 
             # Route by method prefix
-            if method.startswith("mempalace_"):
-                target_url = self.mcp_servers["mempalace"]
+            if method.startswith("vault_"):
+                # OSS Vault — handled directly via boto3
+                await ws.send(json.dumps({
+                    "type": "mcp_response", "id": req_id,
+                    "error": "vault methods not yet implemented in hub"
+                }))
             elif method.startswith("skill_"):
                 target_url = self.mcp_servers["skill"]
             elif method.startswith("kanban_"):

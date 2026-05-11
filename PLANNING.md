@@ -42,9 +42,9 @@
                           │              ClawShell Cloud                 │
                           │              (Aliyun ECS)                   │
   ┌──────────────┐        │  ┌────────────┐  ┌────────────┐            │
-  │  端侧 Mac    │        │  │ MemPalace  │  │  Skill     │            │
-  │  ClawShell   │◄──WS──►│  │ MCP Server │  │  Registry  │            │
-  │  Local       │        │  │ (共享记忆)  │  │  (技能中枢) │            │
+  │  端侧 Mac    │        │  │   OSS     │  │  Skill     │            │
+  │  ClawShell   │◄──WS──►│  │   Vault  │  │  Registry  │            │
+  │  Local       │        │  │ (vault同步)│  │  (技能中枢) │            │
   └──────────────┘        │  ├────────────┤  ├────────────┤            │
                           │  │  Kanban    │  │  Workflow  │            │
   ┌──────────────┐        │  │  MCP Svr   │  │  Engine    │            │
@@ -90,7 +90,8 @@ Desktop/ClawShell/
 │   │   ├── inventory.yml
 │   │   ├── playbook.yml
 │   │   └── roles/
-│   │       ├── mempalace/
+│   │       ├── memos/
+│   │       │   └── docker-compose.yml   # Memos Cloud 自建部署
 │   │       ├── skill-registry/
 │   │       ├── kanban-mcp/
 │   │       └── nginx/
@@ -103,10 +104,9 @@ Desktop/ClawShell/
 │   │   │   └── registry.py             # 连接端注册表
 │   │   ├── requirements.txt
 │   │   └── config.yaml
-│   ├── mempalace-cloud/                # 云端记忆中枢
-│   │   ├── Dockerfile
-│   │   ├── config.yaml
-│   │   └── init-scripts/
+│   ├── vault-oss/                         # Obsidian Vault OSS 同步
+│   │   ├── sync.sh                        # 双向同步脚本
+│   │   └── config.yaml                    # OSS rclone 配置
 │   ├── skill-registry/                  # 技能注册表
 │   │   ├── registry.db                  # SQLite 或 PostgreSQL
 │   │   ├── skills/                      # 云端技能骨架
@@ -199,31 +199,23 @@ REST: https://your-cloud.com/api/v1/
 
 **多租户**：单用户架构（ClawShell 定位），JWT 中嵌入 `user_id`，所有数据按 `user_id` 隔离。不需要多租户 SaaS 层。
 
-### 4.2 MemPalace Cloud（记忆中枢）
+### 4.2 Obsidian Vault Cloud Storage（云端知识库）
 
-**职责**：全量共享记忆的云端存储与检索
+**职责**：Obsidian vault 文件的云端存储与多端同步
 
 **部署方式**：
-- Docker 容器，持久化存储用阿里云 RDS（PostgreSQL）或 ECS 本地 SSD
-- 启动脚本自动初始化 ChromaDB collections
+- 阿里云 OSS（对象存储）作为 vault 文件的云端存储
+- S3 兼容 API，跨设备同步通过 s3fs 或 rclone
+- Vault 文件（`.md`、图片、附件）直接存储，不做渲染
 
 **配置**：
 ```yaml
-# mempalace-cloud/config.yaml
-storage:
-  type: chromadb
-  persist_directory: /data/palace
-  distance_function: cosine
-
-auth:
-  jwt_secret: ${JWT_SECRET}
-  allowed_users:
-    - ${USER_ID}
-
-sync:
-  enabled: true
-  push_endpoint: https://your-cloud.com/api/v1/sync/push
-  pull_endpoint: https://your-cloud.com/api/v1/sync/pull
+# 环境变量
+OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+OSS_BUCKET=clawshell-vault
+OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID}
+OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET}
+OSS_VAULT_PREFIX=vault/  # bucket 内的路径前缀
 ```
 
 ### 4.3 Skill Registry（技能注册表）
@@ -308,12 +300,14 @@ services:
       - ./cloud-hub/data:/data
     restart: unless-stopped
 
-  mempalace:
-    image: mempalace/mcp-server:latest
+  memos:
+    image: neosmemo/memos:latest
+    container_name: clawshell-memos
+    ports: ["5230:5230"]
     environment:
-      - PALACE_PATH=/data/palace
+      - MEMOS_MODE=production
     volumes:
-      - ./mempalace-data:/data/palace
+      - ./memos-data:/var/opt/memos
     restart: unless-stopped
 
   skill-registry:
@@ -336,7 +330,7 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl
     depends_on:
       - cloud-hub
-      - mempalace
+      - memos
       - skill-registry
       - kanban
     restart: unless-stopped
@@ -420,7 +414,7 @@ platforms:
 
 冲突仲裁：
   - 看板操作：云端权威（last-write-wins with version check）
-  - 记忆写入：CRDT merge（MemPalace 的 vector DB 天然支持并发）
+  - 记忆写入：Memos（结构化笔记 + 文档）
   - 技能更新：版本号比对，提示用户手动选择
 ```
 
@@ -446,7 +440,7 @@ platforms:
 ```
 Hermes Adapter：
   → 将云端 "task.create" 映射为 Hermes cron job create
-  → 将云端 "memory.search" 映射为 Hermes MCP mempalace_* 调用
+  → 将云端 "memos.search" 映射为 Hermes MCP memos 调用
   → 将云端 "skill.invoke" 映射为 Hermes skill run
 
 OpenClaw Adapter：
@@ -507,7 +501,7 @@ MCP 原生使用 stdio（标准输入/输出），适用于本地进程通信。
   "id": "req-uuid-123",
   "method": "tools/call",
   "params": {
-    "name": "mempalace_search",
+    "name": "memos_search",
     "arguments": {"query": "ClawShell", "limit": 5}
   }
 }
@@ -534,7 +528,7 @@ MCP 原生使用 stdio（标准输入/输出），适用于本地进程通信。
   → 检查 token 有效性
   → 解析 method name（如 mempalace_search）
   → 路由到对应 MCP Server：
-      mempalace_*  → MemPalace Cloud MCP Server
+      vault_*    → OSS Storage（vault 文件读写）
       skill_*      → Skill Registry MCP Server
       kanban_*     → Kanban MCP Server
       ~other       → 本地适配器（Edge-side only）
@@ -588,9 +582,9 @@ Token 刷新：
 ✓ 制定 coding style guide
 ```
 
-### Phase 1：云端基础 + MemPalace 云化（3天）
+### Phase 1：云端基础 + Obsidian Vault OSS 同步（3天）
 
-**目标**：Cloud Hub 骨架 + MemPalace 云端部署
+**目标**：Cloud Hub 骨架 + Obsidian Vault OSS 同步
 
 ```
 [Day 2-3] Cloud Hub 骨架
@@ -600,12 +594,12 @@ Token 刷新：
   ✓ Docker Compose 本地开发环境
   ✓ nginx 反向代理配置
 
-[Day 4] MemPalace Cloud 部署
-  ✓ MemPalace MCP Server Docker 镜像
-  ✓ 持久化存储配置（Aliyun SSD）
-  ✓ 与 Cloud Hub 集成
-  ✓ https + 域名配置（可选，用 IP 先跑）
-  ✓ 本地测试：Edge → Cloud Hub → MemPalace 联通
+[Day 4] Obsidian Vault OSS 同步
+  ✓ OSS Bucket 创建 + 访问凭证配置
+  ✓ rclone 或 s3fs 挂载配置
+  ✓ vault 目录与 OSS 前缀映射
+  ✓ 双向同步脚本（watch + 上传）
+  ✓ 本地测试：vault 文件变更自动同步到 OSS
 ```
 
 ### Phase 2：端侧基础框架（2天）
@@ -708,7 +702,7 @@ Token 刷新：
 | MCP over WebSocket 延迟影响体感 | 中 | 中 | 本地缓存优先，异步同步 |
 | 多端并发写同一任务导致冲突 | 低 | 中 | CRDT + 云端权威 + 用户提示 |
 | 阿里云 ECS 安全组配置错误 | 中 | 高 | 部署脚本中内嵌安全组配置 |
-| MemPalace 云端性能不足 | 低 | 中 | 先用轻量应用服务器测试，不够再升级 |
+| MemPalace 本地部署 + Memos Cloud 云端部署 | 低 | 中 | 先用轻量应用服务器测试，不够再升级 |
 | Edge Gateway 自动发现误判平台 | 低 | 低 | 提供手动覆盖选项 |
 | 长期积累数据量超出 ECS 存储 | 中 | 中 | 设计时预留 OSS 扩展接口 |
 
@@ -717,7 +711,7 @@ Token 刷新：
 ## 10. 依赖关系图
 
 ```
-Phase 1（Cloud Hub + MemPalace Cloud）
+Phase 1（Cloud Hub + Obsidian Vault OSS）
     │
     ├──► Phase 2（Edge Gateway） ←─ 需要 Phase 1 的协议规范
     │         │
@@ -735,9 +729,11 @@ Phase 1（Cloud Hub + MemPalace Cloud）
 ## 11. 验收标准
 
 ### Phase 1 完成标准
-- [ ] `docker-compose up` 可在本地启动 Cloud Hub + MemPalace Cloud
-- [ ] Edge Gateway（手动配置）可连接 Cloud Hub 并调用 `mempalace_search`
+- [ ] `docker-compose up` 可在本地启动 Cloud Hub
+- [ ] Edge Gateway（手动配置）可连接 Cloud Hub
 - [ ] JWT 认证生效，无 token 拒绝访问
+- [ ] OSS Bucket 创建成功，rclone/s3fs 挂载正常
+- [ ] vault 文件变更双向同步正常
 
 ### Phase 2 完成标准
 - [ ] `discover.sh` 在干净 macOS 系统上能检测到已安装的 Hermes
