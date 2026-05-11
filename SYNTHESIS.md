@@ -282,12 +282,12 @@ Edge 的 EventBus 是**轻量版**，不复制 Windows 的全部 9 个 eventbus 
 
 ## 8. 验收标准
 
-- [ ] CloudHub 导入新增 Domain 无循环依赖
-- [ ] GenomeDomain.genome_import → EventStore 持久化
-- [ ] AdaptiveDomain.rule_evaluate → JSON 条件规则求值
-- [ ] SwarmDomain.trust_evaluate → 节点信任分计算
-- [ ] Edge Local EventBus → SyncEngine 集成（本地事件同步到云端）
-- [ ] WorkflowEngine saga 补偿自动执行
-- [ ] 所有新增模块单元测试通过
+- [x] CloudHub 导入新增 Domain 无循环依赖
+- [x] GenomeDomain.genome_import → EventStore 持久化
+- [x] AdaptiveDomain.rule_evaluate → JSON 条件规则求值
+- [x] SwarmDomain.trust_evaluate → 节点信任分计算
+- [x] Edge Local EventBus → SyncEngine 集成（本地事件同步到云端）
+- [x] WorkflowEngine saga 补偿自动执行
+- [x] 所有新增模块单元测试通过
 - [ ] Docker Compose 部署成功
 - [ ] Git tag v2.0 推送完成

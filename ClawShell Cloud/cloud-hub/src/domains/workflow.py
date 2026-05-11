@@ -21,6 +21,7 @@ class StepType:
     PARALLEL = "parallel"   # 并行执行多个子步骤
     CONDITION = "condition" # 条件分支
     NOTIFY = "notify"       # 通知
+    SAGA = "saga"          # SAGA 事务步骤（带补偿的原子事务）
 
 
 class Step:
@@ -34,6 +35,7 @@ class Step:
         next_on_failure: Optional[str] = None,
         retry: int = 0,
         timeout: int = 300,
+        compensation: Optional[Dict[str, Any]] = None,
     ):
         self.step_id = step_id
         self.step_type = step_type
@@ -42,6 +44,7 @@ class Step:
         self.next_on_failure = next_on_failure  # 失败时跳转 step_id
         self.retry = retry
         self.timeout = timeout
+        self.compensation = compensation  # 补偿动作：{step_type, params}
 
 
 class Workflow:
@@ -74,6 +77,7 @@ class Workflow:
                     "next_on_failure": s.next_on_failure,
                     "retry": s.retry,
                     "timeout": s.timeout,
+                    "compensation": s.compensation,
                 }
                 for s in self.steps.values()
             ],
@@ -91,6 +95,7 @@ class Workflow:
                 next_on_failure=sd.get("next_on_failure"),
                 retry=sd.get("retry", 0),
                 timeout=sd.get("timeout", 300),
+                compensation=sd.get("compensation"),
             )
             for sd in data.get("steps", [])
         ]
@@ -422,7 +427,8 @@ class WorkflowDomain:
                             exec_instance.error = f"step {step.next_on_failure} not found"
                             break
                     else:
-                        # 无失败处理，默认失败
+                        # 无失败处理，默认失败 → 先执行 SAGA 补偿
+                        await self._compensate_saga(exec_instance)
                         exec_instance.status = ExecutionStatus.FAILED
                         exec_instance.error = str(result)
                         break
@@ -485,6 +491,8 @@ class WorkflowDomain:
                     return await self._step_condition(step, ctx)
                 elif step_type == StepType.NOTIFY:
                     return await self._step_notify(step, ctx)
+                elif step_type == StepType.SAGA:
+                    return await self._step_saga(step, exec_instance)
                 else:
                     return False, f"unknown step type: {step_type}"
             except Exception as e:
@@ -628,6 +636,101 @@ class WorkflowDomain:
         })
         
         return True, {"notified": True, "message": message}
+
+    async def _step_saga(self, step: Step, exec_instance: Execution) -> tuple[bool, Any]:
+        """
+        SAGA 事务步骤：执行正向动作，失败时自动补偿已完成的 saga 步骤。
+        compensation 字段格式：{step_type, params}
+        """
+        # 从 params 中提取正向动作
+        params = self._resolve_params(step.params, exec_instance.step_results)
+        forward_type = params.get("forward_type", StepType.TASK)
+        forward_params = params.get("forward_params", {})
+
+        # 构建临时 Step 执行正向动作
+        forward_step = Step(
+            step_id=f"{step.step_id}-forward",
+            step_type=forward_type,
+            params=forward_params,
+        )
+
+        success, result = await self._execute_step(forward_step, exec_instance)
+
+        if success:
+            # 记录完成的 saga 步骤，供后续补偿使用
+            saga_log = exec_instance.step_results.get("_saga_log", [])
+            saga_log.append({
+                "step_id": step.step_id,
+                "forward_type": forward_type,
+                "forward_params": forward_params,
+                "result": result,
+                "compensation": step.compensation,
+            })
+            exec_instance.step_results["_saga_log"] = saga_log
+            return True, result
+        else:
+            # 正向失败，执行补偿（反向执行已完成的 saga 步骤）
+            if step.compensation:
+                comp = step.compensation
+                comp_type = comp.get("step_type", StepType.TASK)
+                comp_params = comp.get("params", {})
+                comp_step = Step(
+                    step_id=f"{step.step_id}-compensate",
+                    step_type=comp_type,
+                    params=comp_params,
+                )
+                comp_success, comp_result = await self._execute_step(
+                    comp_step, exec_instance
+                )
+                return False, {
+                    "forward_failed": result,
+                    "compensation_attempted": True,
+                    "compensation_success": comp_success,
+                    "compensation_result": comp_result,
+                }
+            return False, {
+                "forward_failed": result,
+                "compensation_attempted": False,
+            }
+
+    async def _compensate_saga(self, exec_instance: Execution) -> None:
+        """
+        当 saga 事务中的非 saga 步骤失败时，补偿所有已完成的 saga 步骤（反向顺序）。
+        """
+        saga_log = exec_instance.step_results.get("_saga_log", [])
+        if not saga_log:
+            return
+
+        logger.info(f"SAGA compensation for execution {exec_instance.execution_id}, "
+                    f"rolling back {len(saga_log)} steps")
+
+        for saga_entry in reversed(saga_log):
+            comp = saga_entry.get("compensation")
+            if not comp:
+                continue
+
+            comp_type = comp.get("step_type", StepType.TASK)
+            comp_params = comp.get("params", {})
+
+            comp_step = Step(
+                step_id=f"compensate-{saga_entry['step_id']}",
+                step_type=comp_type,
+                params=comp_params,
+            )
+
+            try:
+                _, comp_result = await self._execute_step(comp_step, exec_instance)
+                logger.info(f"Compensated {saga_entry['step_id']}: {comp_result}")
+            except Exception as e:
+                logger.error(f"Compensation failed for {saga_entry['step_id']}: {e}")
+                # 补偿失败记入执行结果
+                compensations = exec_instance.step_results.get("_compensation_results", [])
+                compensations.append({
+                    "step_id": saga_entry["step_id"],
+                    "status": "failed",
+                    "error": str(e),
+                })
+                exec_instance.step_results["_compensation_results"] = compensations
 
     def _resolve_params(self, params: Dict, ctx: Dict) -> Dict:
         """将参数中的 {{variable}} 替换为 ctx 中的值"""

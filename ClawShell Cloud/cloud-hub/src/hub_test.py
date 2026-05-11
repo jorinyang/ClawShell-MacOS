@@ -511,6 +511,59 @@ async def main():
     r = ac.get_stats()
     check("Adaptive: stats", r.get("snapshots", 0) >= 1)
 
+    # ── Workflow Saga / Compensation ──────────────────────────────────────────
+    # Test saga_step: define a workflow with saga + compensation, then execute
+    saga_wf = {
+        "workflow_id": "wf-saga-test",
+        "title": "Saga Compensation Test",
+        "steps": [
+            {
+                "step_id": "saga-step1",
+                "step_type": "saga",
+                "params": {
+                    "forward_type": "task",
+                    "forward_params": {"title": "Create order"}
+                },
+                "compensation": {
+                    "step_type": "notify",
+                    "params": {"message": "Order rolled back"}
+                }
+            },
+            {
+                "step_id": "fail-step",
+                "step_type": "condition",
+                "params": {"if": "1/0"},  # raises ZeroDivisionError → triggers compensation
+                "next_on_failure": None  # no handler → triggers compensation
+            },
+        ]
+    }
+    r = await hub_instance.workflow_domain.workflow_define(saga_wf)
+    check("Saga: define with compensation", r.get("success"))
+
+    r = await hub_instance.workflow_domain.workflow_execute({
+        "workflow_id": "wf-saga-test",
+        "params": {}
+    })
+    exec_id = r.get("execution_id", "")
+    check("Saga: execute", r.get("success"), f"exec_id={exec_id[:16]}")
+
+    # Wait for execution to finish
+    for _ in range(10):
+        await asyncio.sleep(0.1)
+        r = await hub_instance.workflow_domain.workflow_status({"execution_id": exec_id})
+        if r.get("execution", {}).get("status") != "running":
+            break
+    r = await hub_instance.workflow_domain.workflow_status({"execution_id": exec_id})
+    check("Saga: failed after compensation", r.get("execution", {}).get("status") == "failed")
+    # Compensation results should be present in step_results
+    step_results = r.get("execution", {}).get("step_results", {})
+    check("Saga: compensation_log exists", "_saga_log" in step_results)
+    check("Saga: compensation attempted", step_results.get("_saga_log", [{}])[0].get("compensation") is not None)
+
+    # Test StepType.SAGA constant is registered
+    from src.domains.workflow import StepType
+    check("Saga: StepType.SAGA registered", hasattr(StepType, "SAGA") and StepType.SAGA == "saga")
+
     # ── Summary ────────────────────────────────────────────────────────────────
     passed = sum(1 for s, _, _ in results if s == "PASS")
     failed = sum(1 for s, _, _ in results if s == "FAIL")
