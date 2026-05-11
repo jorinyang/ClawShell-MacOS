@@ -1,5 +1,6 @@
 """
-ClawShell Cloud Hub — MCP over WebSocket Router + REST API
+ClawShell Cloud Hub — 协同调度中枢
+集成所有 domain handler，维护节点注册表，支持云端主动推送调度指令
 """
 import asyncio
 import json
@@ -7,378 +8,408 @@ import logging
 import os
 import time
 import uuid
-from typing import Optional, Dict, Any
-from aiohttp import web
+from typing import Any, Dict, Optional
+
+import aiohttp
 import jwt
-import boto3
-from botocore.exceptions import ClientError
 import websockets
+from aiohttp import web
 from websockets.server import WebSocketServerProtocol
 
-from .router import Router
-from .registry import ClientRegistry
+from .domains import MemoryDomain, KanbanDomain, SkillDomain, NodeDomain
 from .auth import create_token, create_refresh_token, verify_token
-
+from .protocol import (
+    MSG_TYPE_AUTH, MSG_TYPE_AUTH_OK, MSG_TYPE_MCP_REQUEST,
+    MSG_TYPE_PING, MSG_TYPE_PONG, MSG_TYPE_BROADCAST,
+    MSG_TYPE_DISPATCH, MSG_TYPE_TASK_EVENT, MSG_TYPE_EDGE_REGISTER,
+    MSG_TYPE_EDGE_INFO, MSG_TYPE_CLAIM, MSG_TYPE_CLAIM_OK, MSG_TYPE_CLAIM_REJECT,
+    METHOD_PREFIX_MEMORY, METHOD_PREFIX_KNOWLEDGE,
+    METHOD_PREFIX_KANBAN, METHOD_PREFIX_SKILL, METHOD_PREFIX_NODE, METHOD_PREFIX_VAULT,
+)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cloud-hub")
 
 
 # ─────────────────────────────────────────────────────────────────
-# Vault OSS Handler
-# ─────────────────────────────────────────────────────────────────
-
-class VaultHandler:
-    """Handles vault_* methods via boto3 S3-compatible OSS API."""
-
-    def __init__(self, oss_config: dict):
-        self.cfg = oss_config
-        self._client: Optional[Any] = None
-
-    @property
-    def client(self):
-        if self._client is None:
-            self._client = boto3.client(
-                "s3",
-                endpoint_url=self.cfg.get("endpoint") or None,
-                aws_access_key_id=self.cfg.get("access_key"),
-                aws_secret_access_key=self.cfg.get("secret_key"),
-                region_name="auto",
-            )
-        return self._client
-
-    def _vault_path(self, key: str) -> str:
-        """Prepend vault prefix to a key."""
-        prefix = self.cfg.get("vault_prefix", "vault/")
-        return f"{prefix}{key}".lstrip("/")
-
-    async def list(self, method: str, params: dict, req_id: str) -> dict:
-        """vault_list — list objects in the vault."""
-        try:
-            prefix = params.get("prefix", "")
-            limit = params.get("limit", 100)
-            response = self.client.list_objects_v2(
-                Bucket=self.cfg["bucket"],
-                Prefix=self._vault_path(prefix),
-                MaxKeys=limit,
-            )
-            contents = response.get("Contents", [])
-            return {
-                "objects": [
-                    {"key": obj["Key"][len(self.cfg["vault_prefix"]):], "size": obj["Size"], "modified": obj["LastModified"].isoformat()}
-                    for obj in contents
-                ],
-                "is_truncated": response.get("IsTruncated", False),
-            }
-        except ClientError as e:
-            raise Exception(f"OSS list error: {e}")
-
-    async def upload(self, method: str, params: dict, req_id: str) -> dict:
-        """vault_upload — upload a file to the vault."""
-        key = params.get("key", "")
-        content = params.get("content", "")
-        if not key:
-            raise ValueError("key is required")
-        try:
-            self.client.put_object(
-                Bucket=self.cfg["bucket"],
-                Key=self._vault_path(key),
-                Body=content.encode("utf-8") if isinstance(content, str) else content,
-            )
-            return {"success": True, "key": key}
-        except ClientError as e:
-            raise Exception(f"OSS upload error: {e}")
-
-    async def download(self, method: str, params: dict, req_id: str) -> dict:
-        """vault_download — download a file from the vault."""
-        key = params.get("key", "")
-        if not key:
-            raise ValueError("key is required")
-        try:
-            response = self.client.get_object(
-                Bucket=self.cfg["bucket"],
-                Key=self._vault_path(key),
-            )
-            body = response["Body"].read()
-            # Try utf-8 decode, fall back to base64
-            try:
-                content = body.decode("utf-8")
-            except UnicodeDecodeError:
-                import base64
-                content = base64.b64encode(body).decode()
-            return {"key": key, "content": content}
-        except ClientError as e:
-            raise Exception(f"OSS download error: {e}")
-
-    async def delete(self, method: str, params: dict, req_id: str) -> dict:
-        """vault_delete — delete a file from the vault."""
-        key = params.get("key", "")
-        if not key:
-            raise ValueError("key is required")
-        try:
-            self.client.delete_object(Bucket=self.cfg["bucket"], Key=self._vault_path(key))
-            return {"success": True, "key": key}
-        except ClientError as e:
-            raise Exception(f"OSS delete error: {e}")
-
-
-# ─────────────────────────────────────────────────────────────────
-# Cloud Hub Core
+# Hub 核心
 # ─────────────────────────────────────────────────────────────────
 
 class CloudHub:
+    """
+    云端协同调度中枢。
+    承载所有 domain handler，维护节点注册表，提供 WS + REST API。
+    """
+
     def __init__(self, jwt_secret: str, user_id: str, port: int = 8443):
         self.jwt_secret = jwt_secret
         self.user_id = user_id
         self.port = port
-        self.clients: Dict[str, WebSocketServerProtocol] = {}
-        self.registry = ClientRegistry()
-        self.router = Router()
 
-        # OSS config
-        self.oss_config = {
+        # ── Storage ────────────────────────────────────────────────
+        oss_config = {
             "endpoint": os.environ.get("OSS_ENDPOINT", ""),
             "bucket": os.environ.get("OSS_BUCKET", ""),
             "access_key": os.environ.get("OSS_ACCESS_KEY_ID", ""),
             "secret_key": os.environ.get("OSS_ACCESS_KEY_SECRET", ""),
             "vault_prefix": os.environ.get("OSS_VAULT_PREFIX", "vault/"),
         }
-        self.vault_handler = VaultHandler(self.oss_config)
+        from .storage import OssStore
+        self.store = OssStore(oss_config)
 
-        # MCP server targets
-        self.mcp_servers = {
-            "skill": os.environ.get("SKILL_URL", "ws://skill-registry:8445"),
-            "kanban": os.environ.get("KANBAN_URL", "ws://kanban:8446"),
-        }
+        # ── Domain Handlers ────────────────────────────────────────
+        self.memory_domain = MemoryDomain(self.store)
+        self.kanban_domain = KanbanDomain(self.store)
+        self.skill_domain = SkillDomain(self.store)
+        self.node_domain = NodeDomain(self.store)
 
+        # ── 节点 WS 连接表 (node_id → ws) ─────────────────────────
+        # 仅存储通过 edge.register 注册的节点（非简单 WS 客户端）
+        self._node_ws: Dict[str, WebSocketServerProtocol] = {}
+        self._node_ws_lock = asyncio.Lock()
+
+        # ── WS Server ──────────────────────────────────────────────
         self._ws_server: Optional[Any] = None
         self._app: Optional[web.Application] = None
 
-        # Register vault handlers
-        self.router.register_handler("vault_list", self._vault_handler_wrapper("list"))
-        self.router.register_handler("vault_upload", self._vault_handler_wrapper("upload"))
-        self.router.register_handler("vault_download", self._vault_handler_wrapper("download"))
-        self.router.register_handler("vault_delete", self._vault_handler_wrapper("delete"))
-
-    def _vault_handler_wrapper(self, op: str):
-        async def wrapper(method, params, req_id):
-            return await getattr(self.vault_handler, op)(method, params, req_id)
-        return wrapper
-
-    # ─── WebSocket client handling ───────────────────────────────
+    # ─── WS 入口 ─────────────────────────────────────────────────────────────
 
     async def handle_client(self, ws: WebSocketServerProtocol):
-        """Handle a client WebSocket connection with JWT auth."""
-        client_id = None
+        """处理端侧 WS 连接（支持两种协议：edge_register 和标准 MCP）"""
+        client_id = str(uuid.uuid4())
+        node_id = None
+        authed = False
+
         try:
-            # Wait for auth frame
+            # ── 认证帧 ────────────────────────────────────────────
             auth_frame = await asyncio.wait_for(ws.recv(), timeout=10)
             auth_data = json.loads(auth_frame)
 
-            if auth_data.get("type") != "auth":
-                await ws.send(json.dumps({"error": "Expected auth frame first"}))
+            if auth_data.get("type") == MSG_TYPE_AUTH:
+                token = auth_data.get("token", "")
+                payload = verify_token(token, self.jwt_secret)
+                if payload is None:
+                    await ws.send(json.dumps({"type": "error", "message": "Invalid token"}))
+                    await ws.close()
+                    return
+                user_id = payload.get("user_id")
+                if user_id != self.user_id:
+                    await ws.send(json.dumps({"type": "error", "message": "Invalid user"}))
+                    await ws.close()
+                    return
+                authed = True
+                await ws.send(json.dumps({"type": MSG_TYPE_AUTH_OK, "client_id": client_id}))
+                logger.info(f"Client {client_id} authenticated (user={user_id})")
+
+            elif auth_data.get("type") == MSG_TYPE_EDGE_REGISTER:
+                # edge_register: 端侧直接注册，不需要 JWT
+                node_id = auth_data.get("node_id")
+                node_info = auth_data.get("node_info", {})
+                if not node_id:
+                    await ws.send(json.dumps({"error": "node_id required"}))
+                    await ws.close()
+                    return
+                # 注册节点
+                result = await self.node_domain.node_register({
+                    "node_id": node_id,
+                    "node_info": node_info,
+                })
+                async with self._node_ws_lock:
+                    self._node_ws[node_id] = ws
+                await ws.send(json.dumps({
+                    "type": MSG_TYPE_EDGE_INFO,
+                    "node_id": node_id,
+                    "registered": True,
+                    "cloud_hub_version": "2.0",
+                }))
+                authed = True
+                logger.info(f"Edge node registered: {node_id} [{node_info.get('platform')}]")
+
+            else:
+                await ws.send(json.dumps({"error": f"Unknown auth type: {auth_data.get('type')}"}))
                 await ws.close()
                 return
-
-            token = auth_data.get("token", "")
-            payload = verify_token(token, self.jwt_secret)
-            if payload is None:
-                await ws.send(json.dumps({"error": "Invalid token"}))
-                await ws.close()
-                return
-
-            user_id = payload.get("user_id")
-            if user_id != self.user_id:
-                await ws.send(json.dumps({"error": "Invalid user"}))
-                await ws.close()
-                return
-
-            client_id = await self.registry.register(
-                ws, user_id,
-                platform=auth_data.get("platform"),
-                version=auth_data.get("version"),
-            )
-            await ws.send(json.dumps({"type": "auth_ok", "client_id": client_id}))
-            logger.info(f"Client {client_id} authenticated (user={user_id})")
 
         except asyncio.TimeoutError:
-            logger.warning("Client auth timeout")
+            logger.warning(f"Client {client_id} auth timeout")
             return
         except Exception as e:
             logger.error(f"Auth error: {e}")
             return
 
+        # ── 消息循环 ──────────────────────────────────────────────
         try:
-            async for msg in ws:
-                await self._handle_ws_message(client_id, ws, msg)
+            async for raw in ws:
+                await self._handle_ws_message(client_id, ws, raw, node_id)
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
-            if client_id:
-                await self.registry.unregister(client_id)
+            if node_id:
+                async with self._node_ws_lock:
+                    self._node_ws.pop(node_id, None)
+                await self.node_domain.node_unregister({"node_id": node_id})
+                logger.info(f"Edge node disconnected: {node_id}")
 
-    async def _handle_ws_message(self, client_id: str, ws: WebSocketServerProtocol, raw: str):
-        """Route incoming WebSocket messages."""
-        await self.registry.update_activity(client_id)
+    async def _handle_ws_message(self, client_id: str, ws: WebSocketServerProtocol,
+                                  raw: str, node_id: Optional[str]):
+        """路由 WS 消息"""
         try:
             req = json.loads(raw)
         except json.JSONDecodeError:
             await ws.send(json.dumps({"error": "Invalid JSON"}))
             return
 
-        # Ping/pong
-        if req.get("type") == "ping":
-            await ws.send(json.dumps({"type": "pong"}))
+        msg_type = req.get("type", "")
+
+        # ── Ping ─────────────────────────────────────────────────
+        if msg_type == MSG_TYPE_PING:
+            await ws.send(json.dumps({"type": MSG_TYPE_PONG}))
             return
 
-        # MCP request
-        if req.get("type") == "mcp_request":
+        # ── MCP 请求 ────────────────────────────────────────────
+        if msg_type == MSG_TYPE_MCP_REQUEST:
             method = req.get("method", "")
-            req_id = req.get("id", str(uuid.uuid4()))
             params = req.get("params", {})
-
-            # Route vault_* through local handler (no WS hop)
-            if method.startswith("vault_"):
-                result = await self.router.route(method, params, req_id)
-                await ws.send(json.dumps({"type": "mcp_response", "id": req_id, "result": result}))
-                return
-
-            # Route skill_* / kanban_* through MCP servers
-            target_url = None
-            if method.startswith("skill_"):
-                target_url = self.mcp_servers["skill"]
-            elif method.startswith("kanban_"):
-                target_url = self.mcp_servers["kanban"]
-            else:
-                await ws.send(json.dumps({
-                    "type": "mcp_response", "id": req_id,
-                    "error": {"code": -32601, "message": f"Unknown method: {method}"}
-                }))
-                return
-
-            try:
-                async with websockets.connect(target_url) as mcp_ws:
-                    await mcp_ws.send(json.dumps({
-                        "jsonrpc": "2.0", "id": req_id,
-                        "method": method, "params": params
-                    }))
-                    response = await asyncio.wait_for(mcp_ws.recv(), timeout=30)
-                    await ws.send(json.dumps({
-                        "type": "mcp_response", "id": req_id,
-                        "result": json.loads(response)
-                    }))
-            except Exception as e:
-                logger.error(f"MCP server error: {e}")
-                await ws.send(json.dumps({
-                    "type": "mcp_response", "id": req_id,
-                    "error": {"code": -32603, "message": str(e)}
-                }))
+            req_id = req.get("id", str(uuid.uuid4()))
+            result = await self._route_mcp(method, params, req_id, node_id)
+            await ws.send(json.dumps({
+                "type": "mcp_response",
+                "id": req_id,
+                "result": result,
+            }))
             return
 
-        # Broadcast
-        if req.get("type") == "broadcast":
+        # ── 节点主动上报任务状态（回调云端）───────────────────────
+        if msg_type == "task_callback":
+            # 端侧完成任务/失败后回调云端
+            await self._handle_task_callback(params=req.get("params", {}))
+            return
+
+        # ── 技能结果回调 ────────────────────────────────────────
+        if msg_type == "skill_callback":
+            await self.skill_domain.skill_result(req.get("params", {}))
+            await ws.send(json.dumps({"type": "ack", "message": "callback recorded"}))
+            return
+
+        # ── 节点心跳 ────────────────────────────────────────────
+        if msg_type == "node_heartbeat" and node_id:
+            await self.node_domain.node_heartbeat({"node_id": node_id})
+            return
+
+        # ── 广播 ────────────────────────────────────────────────
+        if msg_type == MSG_TYPE_BROADCAST:
             msg = req.get("message", {})
-            await self.registry.broadcast(msg, exclude_client_id=client_id)
+            await self._broadcast_to_nodes(msg, exclude_node=node_id)
             return
 
         await ws.send(json.dumps({"type": "echo", "data": req}))
 
-    # ─── REST API ───────────────────────────────────────────────
+    async def _route_mcp(self, method: str, params: dict, req_id: str,
+                          node_id: Optional[str]) -> dict:
+        """将 MCP 方法路由到对应 domain handler"""
+        try:
+            # ── 记忆域 + 知识域 ──────────────────────────────────
+            if method.startswith(METHOD_PREFIX_MEMORY) or method.startswith(METHOD_PREFIX_KNOWLEDGE):
+                handler = getattr(self.memory_domain, method, None)
+                if handler:
+                    result = await handler(params)
+                    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+            # ── 任务域 ──────────────────────────────────────────
+            if method.startswith(METHOD_PREFIX_KANBAN):
+                handler = getattr(self.kanban_domain, method, None)
+                if handler:
+                    result = await handler(params)
+                    # 调度模式下，需要推送任务给指定节点
+                    if method == "kanban_task_assign":
+                        target_node = params.get("node_id")
+                        task_data = result.get("task", {})
+                        await self._push_dispatch(target_node, {
+                            "type": MSG_TYPE_TASK_EVENT,
+                            "event": "task_assigned",
+                            "task": task_data,
+                        })
+                    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+            # ── 技能域 ──────────────────────────────────────────
+            if method.startswith(METHOD_PREFIX_SKILL):
+                handler = getattr(self.skill_domain, method, None)
+                if handler:
+                    result = await handler(params)
+                    # skill_invoke → 推送调度指令到目标节点
+                    if method == "skill_invoke":
+                        target = result.get("target_node")
+                        if target:
+                            await self._push_dispatch(target, {
+                                "type": MSG_TYPE_DISPATCH,
+                                "invoke_id": result.get("invoke_id"),
+                                "skill_id": result.get("skill_id"),
+                                "skill_name": result.get("skill_name"),
+                                "input": result.get("input", {}),
+                            })
+                    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+            # ── 节点域 ──────────────────────────────────────────
+            if method.startswith(METHOD_PREFIX_NODE):
+                handler = getattr(self.node_domain, method, None)
+                if handler:
+                    result = await handler(params)
+                    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+            # ── 存储域 ──────────────────────────────────────────
+            if method.startswith(METHOD_PREFIX_VAULT):
+                return await self._vault_handler(method, params, req_id)
+
+            return {
+                "jsonrpc": "2.0", "id": req_id,
+                "error": {"code": -32601, "message": f"Unknown method: {method}"}
+            }
+
+        except Exception as e:
+            logger.error(f"MCP route error [{method}]: {e}")
+            return {
+                "jsonrpc": "2.0", "id": req_id,
+                "error": {"code": -32603, "message": str(e)}
+            }
+
+    async def _vault_handler(self, method: str, params: dict, req_id: str) -> dict:
+        """vault_* 通过 OssStore 处理"""
+        op = method.replace("vault_", "")
+        try:
+            if op == "list":
+                result = await self.store.vault_list(**params)
+            elif op == "upload":
+                result = await self.store.vault_upload(**params)
+            elif op == "download":
+                result = await self.store.vault_download(**params)
+            elif op == "delete":
+                result = await self.store.vault_delete(**params)
+            else:
+                return {"jsonrpc": "2.0", "id": req_id,
+                        "error": {"code": -32601, "message": f"Unknown vault op: {op}"}}
+            return {"jsonrpc": "2.0", "id": req_id, "result": result}
+        except Exception as e:
+            return {"jsonrpc": "2.0", "id": req_id,
+                    "error": {"code": -32603, "message": str(e)}}
+
+    async def _handle_task_callback(self, params: dict):
+        """处理端侧的任务完成/失败回调"""
+        callback_type = params.get("callback_type")
+        task_id = params.get("task_id")
+        node_id = params.get("node_id")
+
+        if callback_type == "done":
+            await self.kanban_domain.kanban_task_work_done({
+                "task_id": task_id, "node_id": node_id, "result": params.get("result", "")
+            })
+        elif callback_type == "fail":
+            await self.kanban_domain.kanban_task_work_fail({
+                "task_id": task_id, "node_id": node_id, "error": params.get("error", "")
+            })
+
+    # ─── 推送给端侧节点 ─────────────────────────────────────────────────────
+
+    async def _push_dispatch(self, node_id: str, message: dict):
+        """向指定节点推送调度指令（云端主动）"""
+        async with self._node_ws_lock:
+            ws = self._node_ws.get(node_id)
+
+        if ws is None:
+            # 节点不在线，调度指令暂存到 OSS（节点下次上线时拉取）
+            await self._queue_dispatch(node_id, message)
+            logger.warning(f"Node {node_id} offline, dispatch queued")
+            return
+
+        try:
+            await ws.send(json.dumps(message))
+            logger.info(f"Dispatch pushed to node {node_id}: {message.get('type')}")
+        except Exception as e:
+            logger.error(f"Push to node {node_id} failed: {e}")
+            await self._queue_dispatch(node_id, message)
+
+    async def _queue_dispatch(self, node_id: str, message: dict):
+        """离线节点的调度指令存入 OSS 队列"""
+        import time
+        queue_key = f"dispatch_queue/{node_id}/{int(time.time()*1000)}.json"
+        await self.store.vault_upload(queue_key, json.dumps(message))
+
+    async def _broadcast_to_nodes(self, message: dict, exclude_node: Optional[str] = None):
+        """广播消息给所有在线节点"""
+        async with self._node_ws_lock:
+            targets = {
+                nid: ws for nid, ws in self._node_ws.items()
+                if nid != exclude_node
+            }
+        for nid, ws in targets.items():
+            try:
+                await ws.send(json.dumps(message))
+            except Exception as e:
+                logger.warning(f"Broadcast to {nid} failed: {e}")
+
+    # ─── REST API ─────────────────────────────────────────────────────────────
 
     async def _handle_auth_token(self, request: web.Request) -> web.Response:
-        """POST /api/v1/auth/token — issue JWT access token."""
+        """POST /api/v1/auth/token"""
         try:
             body = await request.json()
         except Exception:
             return web.json_response({"error": "Invalid JSON"}, status=400)
 
-        grant_type = body.get("grant_type", "password")
-        if grant_type == "password":
+        grant = body.get("grant_type", "password")
+        if grant == "password":
             user_id = body.get("user_id") or body.get("username")
-            password = body.get("password")
-            # Simple user_id==password check for local dev; replace with real auth
             if not user_id:
                 return web.json_response({"error": "user_id required"}, status=400)
-            # In dev mode: any non-empty password is accepted
-            access_token = create_token(user_id, self.jwt_secret, expires_hours=1)
-            refresh_token = create_refresh_token(user_id, self.jwt_secret, expires_days=7)
+            at = create_token(user_id, self.jwt_secret, expires_hours=1)
+            rt = create_refresh_token(user_id, self.jwt_secret, expires_days=7)
             return web.json_response({
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "token_type": "Bearer",
-                "expires_in": 3600,
+                "access_token": at, "refresh_token": rt,
+                "token_type": "Bearer", "expires_in": 3600,
             })
-        elif grant_type == "refresh":
-            refresh_tkn = body.get("refresh_token", "")
-            payload = verify_token(refresh_tkn, self.jwt_secret)
-            if payload is None or payload.get("type") != "refresh":
+        elif grant == "refresh":
+            rtk = body.get("refresh_token", "")
+            payload = verify_token(rtk, self.jwt_secret)
+            if not payload or payload.get("type") != "refresh":
                 return web.json_response({"error": "Invalid refresh token"}, status=401)
-            new_access = create_token(payload["user_id"], self.jwt_secret, expires_hours=1)
-            return web.json_response({"access_token": new_access, "token_type": "Bearer", "expires_in": 3600})
-        else:
-            return web.json_response({"error": "Unsupported grant_type"}, status=400)
+            nat = create_token(payload["user_id"], self.jwt_secret, expires_hours=1)
+            return web.json_response({"access_token": nat, "token_type": "Bearer", "expires_in": 3600})
+        return web.json_response({"error": "Unsupported grant_type"}, status=400)
 
     async def _handle_status(self, request: web.Request) -> web.Response:
-        """GET /api/v1/status — cloud hub status."""
-        count = await self.registry.client_count()
+        """GET /api/v1/status"""
+        nodes = self.node_domain.get_online_nodes()
         return web.json_response({
             "status": "ok",
-            "version": "1.0.0",
-            "connected_clients": count,
+            "version": "2.0",
             "user_id": self.user_id,
+            "online_nodes": len(nodes),
+            "nodes": [{"node_id": n["node_id"], "platform": n.get("platform"),
+                       "status": n.get("status")} for n in nodes],
             "timestamp": time.time(),
         })
 
-    async def _handle_sync_push(self, request: web.Request) -> web.Response:
-        """POST /api/v1/sync/push — receive offline operations from edge."""
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "Invalid JSON"}, status=400)
-
-        operations = body.get("operations", [])
-        # For now, just log and return success
-        for op in operations:
-            logger.info(f"Sync push: {op.get('type')} op {op.get('id')}")
-        return web.json_response({"received": len(operations), "status": "ok"})
-
-    async def _handle_sync_pull(self, request: web.Request) -> web.Response:
-        """GET /api/v1/sync/pull/:since — delta pull since timestamp."""
-        since = request.match_info.get("since", "0")
-        try:
-            since_ts = float(since)
-        except ValueError:
-            return web.json_response({"error": "Invalid since timestamp"}, status=400)
-
-        # TODO: query MCP servers for changes since since_ts
-        return web.json_response({"changes": [], "timestamp": time.time(), "synced": True})
-
     async def _handle_health(self, request: web.Request) -> web.Response:
-        """GET /health — liveness probe."""
+        """GET /health"""
         return web.Response(text="ok\n", content_type="text/plain")
 
     def _build_app(self) -> web.Application:
         app = web.Application()
         app.router.add_post("/api/v1/auth/token", self._handle_auth_token)
         app.router.add_get("/api/v1/status", self._handle_status)
-        app.router.add_post("/api/v1/sync/push", self._handle_sync_push)
-        app.router.add_get("/api/v1/sync/pull/{since}", self._handle_sync_pull)
         app.router.add_get("/health", self._handle_health)
         return app
 
-    # ─── Server start ───────────────────────────────────────────
+    # ─── Server start ─────────────────────────────────────────────────────────
 
     async def start(self):
-        """Start both WebSocket server and REST API."""
+        """启动 WS server + REST API"""
         self._app = self._build_app()
 
-        # REST API runner
         api_runner = web.AppRunner(self._app)
         await api_runner.setup()
         api_site = web.TCPSite(api_runner, "0.0.0.0", 8080)
         await api_site.start()
         logger.info("REST API listening on http://0.0.0.0:8080")
 
-        # WebSocket server
         self._ws_server = await websockets.serve(
             self.handle_client, "0.0.0.0", self.port
         )

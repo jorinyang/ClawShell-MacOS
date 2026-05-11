@@ -1,79 +1,47 @@
 version: "3.9"
 
 services:
-  # Cloud Hub — MCP WebSocket Router
+  # ── Cloud Hub — 协同调度中枢 ─────────────────────────────────────────────
+  # 承载：记忆域 + 知识域 + 任务域 + 技能域 + 节点域
+  # 数据全部存在 OSS，不依赖 Docker Volume
   cloud-hub:
     build:
       context: ./cloud-hub
       dockerfile: Dockerfile
     container_name: clawshell-cloud-hub
     ports:
-      - "8443:8443"
-      - "8080:8080"
+      - "8443:8443"   # WebSocket (MCP + edge_register)
+      - "8080:8080"   # REST API
     environment:
       - JWT_SECRET=${JWT_SECRET:?Please set JWT_SECRET}
       - USER_ID=${USER_ID:?Please set USER_ID}
-      - OSS_ENDPOINT=${OSS_ENDPOINT:-}
-      - OSS_BUCKET=${OSS_BUCKET:-}
-      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
-      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
+      # OSS 存储
+      - OSS_ENDPOINT=${OSS_ENDPOINT:?Please set OSS_ENDPOINT}
+      - OSS_BUCKET=${OSS_BUCKET:?Please set OSS_BUCKET}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:?Please set OSS_ACCESS_KEY_ID}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:?Please set OSS_ACCESS_KEY_SECRET}
       - OSS_VAULT_PREFIX=${OSS_VAULT_PREFIX:-vault/}
-      - SKILL_URL=ws://skill-registry:8445
-      - KANBAN_URL=ws://kanban:8446
-      - LOG_LEVEL=INFO
-    volumes:
-      - ./cloud-hub/data:/data
-      - ./cloud-hub/config.yaml:/app/config.yaml:ro
+      # 记忆域：memos-cloud
+      - MEMOS_API_BASE=${MEMOS_API_BASE:-}
+      - MEMOS_API_KEY=${MEMOS_API_KEY:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     networks:
       - clawshell-net
 
-  # Skill Registry — 技能注册表
-  skill-registry:
-    build:
-      context: ./skill-registry
-      dockerfile: Dockerfile
-    container_name: clawshell-skill-registry
-    ports:
-      - "8445:8445"
-    environment:
-      - REGISTRY_DB_PATH=/data/registry.db
-    volumes:
-      - ./skill-registry/data:/data
-    restart: unless-stopped
-    networks:
-      - clawshell-net
-
-  # Kanban MCP — 任务看板
-  kanban:
-    build:
-      context: ./kanban-mcp
-      dockerfile: Dockerfile
-    container_name: clawshell-kanban
-    ports:
-      - "8446:8446"
-    environment:
-      - KANBAN_DATA_PATH=/data
-      - JWT_SECRET=${JWT_SECRET}
-    volumes:
-      - ./kanban-data:/data
-    restart: unless-stopped
-    networks:
-      - clawshell-net
-
-  # Nginx — 反向代理 + SSL
+  # ── Nginx — TLS 终止 ───────────────────────────────────────────────────
   nginx:
     image: nginx:alpine
     container_name: clawshell-nginx
     ports:
-      - "443:443"
-      - "80:80"
+      - "443:443"   # HTTPS
+      - "80:80"     # HTTP
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/ssl:/etc/nginx/ssl:ro
