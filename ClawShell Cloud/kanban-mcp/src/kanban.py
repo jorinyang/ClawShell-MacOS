@@ -34,8 +34,19 @@ DEFAULT_BOARD = {
 
 # ─── Persistence ─────────────────────────────────────────────────────────────
 
+def _ensure_data_dir():
+    """Create DATA_DIR, fall back to /tmp if not writable."""
+    import tempfile
+    global DATA_DIR, BOARD_FILE
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+    except OSError:
+        DATA_DIR = tempfile.mkdtemp(prefix="kanban-")
+        BOARD_FILE = os.path.join(DATA_DIR, "board.json")
+        os.makedirs(DATA_DIR, exist_ok=True)
+
 def _read_board() -> dict:
-    os.makedirs(DATA_DIR, exist_ok=True)
+    _ensure_data_dir()
     if not os.path.exists(BOARD_FILE):
         board = json.loads(json.dumps(DEFAULT_BOARD))
         _write_board(board)
