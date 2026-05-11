@@ -369,11 +369,11 @@
 | Phase | 完成标准 | 状态 |
 |-------|---------|------|
 | Phase 0 | Git仓库建立 / PLANNING.md | ✅ |
-| Phase 1 | docker-compose up 本地启动 Cloud Hub + OSS Bucket 创建 | 🔲 |
-| Phase 2 | discover.sh 检测 Hermes / Edge Gateway 启动无报错 | 🔲 |
-| Phase 3 | 断网后操作记录到 pending_operations.jsonl | 🔲 |
-| Phase 4 | install.sh 10分钟内完成端侧安装 | 🔲 |
-| Phase 5 | 技能云端发布端侧可见 / 看板多端一致 | 🔲 |
+| Phase 1 | docker-compose up 本地启动 Cloud Hub + OSS Bucket 创建 | ✅ |
+| Phase 2 | discover.sh 检测 Hermes / Edge Gateway 启动无报错 | ✅ |
+| Phase 3 | 断网后操作记录到 pending_operations.jsonl | ✅ |
+| Phase 4 | install.sh 10分钟内完成端侧安装 | ✅ |
+| Phase 5 | 技能云端发布端侧可见 / 看板多端一致 | ✅ |
 | Phase 6 | ECS部署验证 / 文档完整 | 🔲 |
 
 ---
