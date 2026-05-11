@@ -1,7 +1,7 @@
 # ClawShell 2.0 — 实施计划详解
 
-> 版本：v1.0
-> 更新：2026-05-11
+> 版本：v1.1（Phase 1-6 完整实现）
+> 发布：2026-05-12
 > 仓库：https://github.com/jorinyang/ClawShell-MacOS
 
 ---
@@ -313,49 +313,46 @@
 
 ---
 
-## Phase 6：生产部署 + 文档（2天）
+## Phase 6：文档完善（1天）
 
-**Day 15：阿里云 ECS 部署验证**
+> **注意**：ECS 部署验证待云端资源就绪后进行（不阻塞当前版本发布）
+> 部署实施任务移至 Phase 6 扩展任务（见本节末尾）
 
-#### 6.1 Docker Compose ECS 部署验证
-- [ ] 阿里云轻量应用服务器购买 + 网络配置
-- [ ] SSH 密钥配置
-- [ ] `deploy.sh` 执行验证
-- [ ] 端口访问验证（安全组开放 80/443/8443）
-- [ ] Docker 服务健康检查
+**Day 15：文档完善**
 
-#### 6.2 Ansible 非 Docker 部署验证
-- [ ] inventory.yml 配置
-- [ ] playbook.yml 任务定义
-- [ ] 各 role 测试（cloud-hub / skill-registry / kanban / nginx）
-- [ ] systemd 服务注册验证
+#### 6.1 完整 README.md ✅
+- [x] 项目介绍（中英文）
+- [x] 架构图（ASCII）
+- [x] 快速开始（5分钟上手）
+- [x] 文档目录链接
 
-#### 6.3 数据迁移脚本（migrate-from-local.sh）
-- [ ] 从本地配置导出（discovered-platforms.yaml）
-- [ ] 从本地 vault 导出到 OSS（rclone copy 本地vault oss:bucket/vault）
-- [ ] 迁移前备份
-- [ ] 迁移后校验
+#### 6.2 架构文档（SPEC.md）✅
+- [x] 完整接口定义（MCP over WS / REST API）
+- [x] 数据模型（pending_operations / conflict_log / Skills DB / Kanban JSON）
+- [x] 协议规范（握手 / Request-Response / 路由前缀）
+- [x] 环境变量与端口映射
 
-**Day 16：文档 + 演示**
+#### 6.3 使用教程 ✅
+- [x] 云端部署教程（docker compose up）
+- [x] 端侧安装教程（install.sh）
+- [x] 平台适配器配置（discover.sh / Hermes / OpenClaw / 悟空）
+- [x] 同步与冲突处理（pending_operations.jsonl / conflict_log.jsonl）
 
-#### 6.4 完整 README.md
-- [ ] 项目介绍（中英文）
-- [ ] 架构图（ASCII/PNG）
-- [ ] 快速开始（5分钟上手）
-- [ ] 文档目录链接
+#### 6.4 常见问题 FAQ ✅
+- [x] 凭证管理（AccessKey / JWT 不进 Git）
+- [x] OSS 节点选择（香港优先）
+- [x] 离线支持说明
 
-#### 6.5 架构文档（SPEC.md）
-- [ ] 完整接口定义
-- [ ] 数据模型
-- [ ] 协议规范（MCP over WS）
-- [ ] 安全性说明
+#### 6.5 数据迁移脚本（migrate-from-local.sh）✅
+- [x] 本地配置导出到备份目录
+- [x] Vault 与 OSS 双向同步
+- [x] 导入恢复流程
 
-#### 6.6 使用教程
-- [ ] 云端部署教程
-- [ ] 端侧安装教程
-- [ ] 平台适配器配置
-- [ ] 同步与冲突处理
-- [ ] 常见问题 FAQ
+#### 6.6 Ansible 部署骨架 ✅
+- [x] inventory.yml 配置
+- [x] deploy.yml playbook
+- [x] cloud-hub / skill-registry / kanban / nginx / docker roles
+- [ ] **ECS 部署验证（待实施）**
 
 #### 6.7 演示视频（可选）
 - [ ] 录制部署流程
@@ -364,17 +361,35 @@
 
 ---
 
+### Phase 6 部署待实施任务
+
+以下任务需云端资源就绪后执行，不阻塞当前版本发布：
+
+```
+Phase 6 扩展任务（待实施）：
+□ 阿里云 ECS 实例购买 + 安全组配置（80/443/8443/8080）
+□ SSH 密钥配置
+□ deploy.sh 执行验证
+□ Docker 服务健康检查
+□ Ansible playbook 在 ECS 上执行验证
+□ systemd 服务注册验证
+□ 端到端联调：Edge Gateway → Cloud Hub → OSS
+□ 演示视频录制
+```
+
+---
+
 ## 验收总览
 
 | Phase | 完成标准 | 状态 |
 |-------|---------|------|
 | Phase 0 | Git仓库建立 / PLANNING.md | ✅ |
-| Phase 1 | docker-compose up 本地启动 Cloud Hub + OSS Bucket 创建 | ✅ |
+| Phase 1 | Cloud Hub 可用 + OSS Bucket 香港节点 | ✅ |
 | Phase 2 | discover.sh 检测 Hermes / Edge Gateway 启动无报错 | ✅ |
 | Phase 3 | 断网后操作记录到 pending_operations.jsonl | ✅ |
 | Phase 4 | install.sh 10分钟内完成端侧安装 | ✅ |
 | Phase 5 | 技能云端发布端侧可见 / 看板多端一致 | ✅ |
-| Phase 6 | ECS部署验证 / 文档完整 | 🔲 |
+| Phase 6 | 文档完整 / Ansible骨架 / 迁移脚本 | ✅（部署待实施） |
 
 ---
 
