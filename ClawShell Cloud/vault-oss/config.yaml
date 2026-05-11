@@ -1,0 +1,22 @@
+# ClawShell Vault OSS 配置文件
+vault:
+  provider: aliyun
+  endpoint: https://oss-cn-hongkong.aliyuncs.com
+  bucket: clawshell-vault
+  region: cn-hongkong
+  vault_prefix: vault/
+
+rclone:
+  remote: clawshell-vault
+  oss_prefix: vault/
+  vault_dir: ~/Documents/Obsidian
+
+sync:
+  md5_check: true
+  conflict_policy: local_wins
+  watch_mode: watchdog
+  poll_interval: 60
+
+logging:
+  level: INFO
+  file: ~/.clawshell-local/sync/vault-oss.log
