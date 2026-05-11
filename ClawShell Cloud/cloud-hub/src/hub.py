@@ -1,5 +1,5 @@
 """
-ClawShell Cloud Hub — 协同调度中枢 v2.0
+ClawShell Cloud Hub — 协同调度中枢 v1.3
 事件驱动架构：
   1. 所有操作产生事件 → Event Store (OSS)
   2. State Aggregator 从事件聚合状态

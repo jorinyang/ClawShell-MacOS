@@ -3,7 +3,7 @@
 > 云端/本地分离的多智能体协同操作系统
 > 适用于类 OpenClaw 架构的增强型外骨骼功能插件
 
-**架构版本**: v2.0
+**架构版本**: v1.3
 **仓库**: [jorinyang/ClawShell-MacOS](https://github.com/jorinyang/ClawShell-MacOS)
 
 ---
