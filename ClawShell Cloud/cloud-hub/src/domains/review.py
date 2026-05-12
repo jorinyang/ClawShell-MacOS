@@ -130,6 +130,20 @@ class ReviewDomain:
 
         return {"success": True, "review": review.to_dict()}
 
+    # ─── Sync Wrappers ───────────────────────────────────────────────────────
+
+    def sync_review_generate(self, params: dict) -> dict:
+        """同步封装 review_generate"""
+        return asyncio.run(self.review_generate(params))
+
+    def sync_review_get(self, params: dict) -> dict:
+        """同步封装 review_get"""
+        return asyncio.run(self.review_get(params))
+
+    def sync_review_list(self, params: dict) -> dict:
+        """同步封装 review_list"""
+        return asyncio.run(self.review_list(params))
+
     async def review_get(self, params: dict) -> dict:
         """review_get — 获取复盘结果"""
         task_id = params.get("task_id", "")

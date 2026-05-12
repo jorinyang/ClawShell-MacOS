@@ -432,6 +432,14 @@ class GlobalOptimizer:
 
     # ─── Global Optimization ───────────────────────────────────────────────────
 
+    def sync_optimize(self, params: dict = None) -> dict:
+        """同步封装 optimize()"""
+        return asyncio.run(self.optimize())
+
+    def sync_analyze_resources(self, params: dict = None) -> dict:
+        """同步封装 analyze_resources()"""
+        return self.analyze_resources()
+
     async def optimize(self) -> OptimizationResult:
         """
         执行全局优化。

@@ -323,7 +323,7 @@ class SwarmDomain:
     async def _emit(self, topic: str, data: dict, source: str = "cloud-hub"):
         ev = Event.make(topic, source, data)
         await self.store.append(ev)
-        self.pubsub.publish(ev)
+        await self.pubsub.publish(ev)
         return ev
 
     # ─── API ─────────────────────────────────────────────────────────────────
@@ -450,7 +450,7 @@ class SwarmDomain:
 
         ev = Event.make(Topic.SKILL_REGISTERED, source=node_id, payload=payload)
         await self.store.append(ev)
-        self.pubsub.publish(ev)
+        await self.pubsub.publish(ev)
 
         logger.info(f"[broadcast] skill_version broadcast: skill_id={skill_id} version={version} node_id={node_id}")
 
@@ -460,3 +460,7 @@ class SwarmDomain:
             "version": version,
             "topic": Topic.SKILL_REGISTERED,
         }
+
+    def sync_broadcast_skill_version(self, params: dict) -> dict:
+        """同步封装 broadcast_skill_version"""
+        return asyncio.run(self.broadcast_skill_version(params))

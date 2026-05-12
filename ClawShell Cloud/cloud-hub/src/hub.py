@@ -35,6 +35,7 @@ from .auth import create_token, create_refresh_token, verify_token
 from .domains import (
     MemoryDomain, KanbanDomain, SkillDomain, NodeDomain,
     WorkflowDomain, GenomeDomain, AdaptiveDomain, SwarmDomain,
+    DeepThinkEngine, ReviewDomain,
 )
 from .event_store.schema import (
     Event, Topic, node_state_topic,
@@ -95,6 +96,8 @@ class CloudHub:
         self.genome_domain = GenomeDomain(self.store, self.pubsub)
         self.adaptive_domain = AdaptiveDomain(self.store, self.pubsub)
         self.swarm_domain = SwarmDomain(self.store, self.pubsub)
+        self.deep_think_engine = DeepThinkEngine(self.store)
+        self.review_domain = ReviewDomain(self.store, self.pubsub)
 
         # Phase 1 增强组件（从 Windows 移植）
         from .event_store.knowledge_graph import KnowledgeGraph
@@ -159,11 +162,13 @@ class CloudHub:
     async def initialize(self) -> None:
         """初始化异步资源"""
         await self.store.initialize()
+        await self.review_domain.start()
         logger.info("CloudHub initialized")
 
     async def shutdown(self) -> None:
         """关闭所有连接"""
         self._running = False
+        await self.review_domain.stop()
         async with self._conn_lock:
             for node_id, ws in list(self._connections.items()):
                 try:
@@ -705,6 +710,22 @@ class CloudHub:
             return await self.swarm_domain.trust_evaluate(params)
         if method == "swarm_ecology_match":
             return await self.swarm_domain.ecology_match(params)
+
+        # ── Deep Think Engine ────────────────────────────────────────────────
+        if method == "deep_think":
+            return await self.deep_think_engine.deep_think(params)
+        if method == "deep_think_get":
+            return await self.deep_think_engine.deep_think_get(params)
+        if method == "deep_think_cancel":
+            return await self.deep_think_engine.deep_think_cancel(params)
+
+        # ── Review Domain ─────────────────────────────────────────────────────
+        if method == "review_generate":
+            return await self.review_domain.review_generate(params)
+        if method == "review_get":
+            return await self.review_domain.review_get(params)
+        if method == "review_list":
+            return await self.review_domain.review_list(params)
 
         # ── Phase 1 增强组件 ─────────────────────────────────────────────
         # Knowledge Graph
@@ -1302,6 +1323,8 @@ class CloudHub:
             result = await self._route_rest(path, body)
         elif path.startswith("/api/v1/vault"):
             result = await self._route_rest(path, body)
+        elif path.startswith("/api/v1/deep_think"):
+            result = await self._route_rest(path, body)
         else:
             return web.json_response({"error": "Not found"}, status=404)
 
@@ -1312,11 +1335,16 @@ class CloudHub:
         if "/skill/discover" in path:
             skills = await self.state.get_all_skill_states()
             return {"skills": skills}
+        if "/skill/broadcast" in path:
+            result = await self.swarm_domain.broadcast_skill_version(body)
+            return result
         if "/node/states" in path:
             return {"nodes": await self.state.get_all_node_states()}
         if "/event/stats" in path:
             latest = await self.event_store.get_latest_seq()
             return {"latest_seq": latest, "subscriber_count": self.pubsub.get_subscription_count()}
+        if "/deep_think" in path:
+            return await self.deep_think_engine.deep_think(body)
         return {"error": "Not implemented"}
 
     # ─── WebSocket 入口 ───────────────────────────────────────────────────────
