@@ -25,6 +25,7 @@ from .global_optimizer import (
     OptimizationGoal, OptimizationResult, AllocationPlan,
     ResourceQuota, ResourceType,
 )
+from .n8n import N8NBridgeDomain
 
 __all__ = [
     # Base
@@ -72,4 +73,6 @@ __all__ = [
     "AllocationPlan",
     "ResourceQuota",
     "ResourceType",
+    # P1b: N8N Bridge Domain
+    "N8NBridgeDomain",
 ]

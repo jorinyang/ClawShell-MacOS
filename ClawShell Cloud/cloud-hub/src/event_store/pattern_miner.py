@@ -3,15 +3,19 @@
 ClawShell Cloud Hub — Pattern Miner
 ===================================
 从 ClawShell-Windows lib/core/genome/pattern_miner.py 提取重构
+P1a Evolution 集成：从 cloud/engines/evolution.py 的 PatternMiner 扩展
 
 核心能力：
-- 频繁项集挖掘（Apriori 算法）
-- 关联规则学习（支持度/置信度/lift）
-- 序列模式发现
-- 简单聚类
+|- 频繁项集挖掘（Apriori 算法）
+|- 关联规则学习（支持度/置信度/lift）
+|- 序列模式发现
+|- 简单聚类
+|- 演化引擎集成：从事件流挖掘频繁事件模式
 """
 
+import asyncio
 import time
+import uuid
 from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass, field, asdict
 from collections import defaultdict
@@ -227,6 +231,33 @@ class PatternMiner:
                 clusters = new_clusters
 
         return clusters
+
+    # ── P1a: Evolution Integration ───────────────────────────────────────────────
+    # 从 cloud/engines/evolution.py 的 PatternMiner 移植，适配 MacOS 异步架构
+
+    def mine_from_events(self, events: List[Dict], min_occurrences: int = 3) -> List[Dict]:
+        """从事件流挖掘频繁事件模式（EvolutionEngine 核心）"""
+        patterns = []
+        type_counts: Dict[str, int] = {}
+        for evt in events:
+            etype = evt.get("event_type", "")
+            type_counts[etype] = type_counts.get(etype, 0) + 1
+
+        for etype, count in type_counts.items():
+            if count >= min_occurrences:
+                pattern = {
+                    "pattern_id": f"pattern-{etype}",
+                    "pattern_type": "recurring_event",
+                    "event_type": etype,
+                    "occurrences": count,
+                    "discovered_at": time.time(),
+                    "suggestion": f"Consider automating response to frequent '{etype}' events.",
+                }
+                patterns.append(pattern)
+
+        with self._lock:
+            self._patterns.extend(patterns)
+        return patterns
 
     def get_pattern(self, pattern_id: str) -> Optional[Pattern]:
         return self._patterns.get(pattern_id)

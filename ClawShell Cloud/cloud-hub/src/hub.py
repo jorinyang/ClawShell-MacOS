@@ -37,6 +37,7 @@ from .domains import (
     WorkflowDomain, GenomeDomain, AdaptiveDomain, SwarmDomain,
     DeepThinkEngine, ReviewDomain,
 )
+from .domains.scheduler import SchedulerDomain
 from .event_store.schema import (
     Event, Topic, node_state_topic,
     SkillRegisteredEvent, TaskCreatedEvent,
@@ -98,6 +99,7 @@ class CloudHub:
         self.swarm_domain = SwarmDomain(self.store, self.pubsub)
         self.deep_think_engine = DeepThinkEngine(self.store)
         self.review_domain = ReviewDomain(self.store, self.pubsub)
+        self.scheduler_domain = SchedulerDomain(self.store)
 
         # Phase 1 增强组件（从 Windows 移植）
         from .event_store.knowledge_graph import KnowledgeGraph
@@ -113,6 +115,7 @@ class CloudHub:
         from .domains.swarm_discovery import SwarmDiscovery
         from .domains.metrics_collector import MetricsCollector
         from .domains.skill_market import SkillMarket
+        from .domains.n8n import N8NBridgeDomain
         from .domains.adaptive_controller import AdaptiveController
         from .event_store.relation_engine import RelationEngine
         from .event_store.semantic_search import SemanticSearch
@@ -136,6 +139,7 @@ class CloudHub:
         self.swarm_discovery = SwarmDiscovery(node_id=f"cloud-{uuid.uuid4().hex[:8]}")
         self.metrics_collector = MetricsCollector()
         self.skill_market = SkillMarket()
+        self.n8n_bridge = N8NBridgeDomain()
         self.adaptive_controller = AdaptiveController()
         self.relation_engine = RelationEngine()
         self.semantic_search = SemanticSearch()
@@ -639,6 +643,28 @@ class CloudHub:
         if method == "vault_list":
             return await self.store.vault_list(params.get("prefix", ""))
 
+        # ── Scheduler Domain ──────────────────────────────────────────────────
+        if method == "scheduler_register":
+            return await self.scheduler_domain.scheduler_register(params)
+
+        if method == "scheduler_unregister":
+            return await self.scheduler_domain.scheduler_unregister(params)
+
+        if method == "scheduler_list":
+            return await self.scheduler_domain.scheduler_list(params)
+
+        if method == "scheduler_log":
+            return await self.scheduler_domain.scheduler_log(params)
+
+        if method == "scheduler_trigger":
+            return await self.scheduler_domain.scheduler_trigger(params)
+
+        if method == "scheduler_start":
+            return await self.scheduler_domain.scheduler_start(params)
+
+        if method == "scheduler_shutdown":
+            return await self.scheduler_domain.scheduler_shutdown(params)
+
         # ── Workflow Domain ──────────────────────────────────────────────────
         if method == "workflow_define":
             return await self.workflow_domain.workflow_define(params)
@@ -1025,6 +1051,31 @@ class CloudHub:
             return {"success": True}
         if method == "adaptive_stats":
             return {"success": True, "stats": self.adaptive_controller.get_stats()}
+
+        # P1b: N8N Bridge Domain
+        if method == "n8n_add_route":
+            pattern = params.get("event_pattern", "")
+            url = params.get("webhook_url", "")
+            result = self.n8n_bridge.add_route(pattern, url)
+            return {"success": True, "pattern": result}
+        if method == "n8n_remove_route":
+            pattern = params.get("event_pattern", "")
+            removed = self.n8n_bridge.remove_route(pattern)
+            return {"success": removed}
+        if method == "n8n_list_routes":
+            return {"success": True, "routes": self.n8n_bridge.list_routes()}
+        if method == "n8n_trigger":
+            results = self.n8n_bridge.trigger(params.get("event", {}))
+            return {"success": True, "results": results}
+        if method == "n8n_trigger_workflow":
+            result = self.n8n_bridge.trigger_workflow(
+                params.get("webhook_url", ""), params.get("payload", {}))
+            return {"success": True, "result": result}
+        if method == "n8n_health_check":
+            return {"success": True, "health": self.n8n_bridge.health_check()}
+        if method == "n8n_trigger_log":
+            return {"success": True, "log": self.n8n_bridge.get_trigger_log(
+                params.get("limit", 50))}
 
         # ── 未知 method ──────────────────────────────────────────────────────
         return {"error": f"Method not found: {method}", "code": -32601}

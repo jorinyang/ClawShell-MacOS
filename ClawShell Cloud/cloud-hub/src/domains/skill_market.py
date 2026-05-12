@@ -93,3 +93,46 @@ class SkillMarket:
             cats[s.category] = cats.get(s.category, 0) + 1
         return {"total_skills": len(self._skills),
                 "by_category": cats}
+
+
+# ============ P1a: AutoSkillPublisher (from EvolutionEngine) ====================
+
+class AutoSkillPublisher:
+    """
+    自动将验证通过的模式发布为技能到 SkillMarket（EvolutionEngine 核心组件）。
+    从 cloud/engines/evolution.py 移植，适配 skill_market.py。
+    """
+
+    def __init__(self, market: SkillMarket = None):
+        self._market = market
+        self._published: List[dict] = []
+        self._lock = __import__('threading').RLock()
+
+    def set_market(self, market) -> None:
+        self._market = market
+
+    def publish_pattern(self, pattern: dict) -> Optional[str]:
+        """将模式发布为技能。返回 skill_id。"""
+        if not self._market:
+            return None
+
+        skill = MarketSkill(
+            skill_id=f"auto_{uuid.uuid4().hex[:12]}",
+            name=f"Auto: {pattern.get('pattern_type', 'pattern')}",
+            description=pattern.get("suggestion", ""),
+            content=json.dumps(pattern, indent=2),
+            author="evolution-engine",
+            category="auto-generated",
+            tags=["auto", pattern.get("event_type", "")],
+            trigger_words=[],
+            dependencies=[],
+            version="1.0.0",
+        )
+        sid = self._market.publish(skill)
+        with self._lock:
+            self._published.append({"skill_id": sid, "pattern": pattern, "published_at": time.time()})
+        return sid
+
+    def get_published(self) -> List[dict]:
+        with self._lock:
+            return list(self._published)

@@ -4,16 +4,20 @@ ClawShell Cloud Hub — Knowledge Graph
 =====================================
 从 ClawShell-Windows lib/core/genome/knowledge_graph.py 提取重构
 适配云端事件驱动架构
+P1a Evolution 集成：从 cloud/engines/evolution.py 的 InsightAggregator 扩展
 
 核心能力：
-- 实体/关系管理
-- 知识图谱查询（DFS 深度遍历）
-- 传递性/对称性推理
-- 最短路径查找
-- 图谱统计
+|- 实体/关系管理
+|- 知识图谱查询（DFS 深度遍历）
+|- 传递性/对称性推理
+|- 最短路径查找
+|- 图谱统计
+|- 演化引擎集成：聚合事件洞察到知识图谱
 """
 
+import asyncio
 import time
+import uuid
 from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass, field, asdict
 from collections import defaultdict
@@ -69,6 +73,74 @@ class GraphQuery:
     relations: List[Relation]
     paths: List[List[str]]
     depth: int
+
+
+# ============ P1a: InsightAggregator (from EvolutionEngine) ====================
+
+class InsightAggregator:
+    """聚合事件和任务结果为可操作洞察（EvolutionEngine 核心组件）"""
+
+    def __init__(self):
+        self._lock = asyncio.Lock() if hasattr(asyncio, 'Lock') else None
+        self._sync_lock = __import__('threading').RLock()
+        self._insights: Dict[str, dict] = {}
+        self._counter = 0
+
+    def add_insight(self, title: str, content: str, category: str = "general",
+                    source_edges: Optional[List[str]] = None,
+                    confidence: float = 0.5,
+                    action_suggestion: str = "") -> str:
+        """添加新洞察。返回 insight_id。"""
+        iid = str(uuid.uuid4())
+        with self._sync_lock:
+            self._insights[iid] = {
+                "insight_id": iid,
+                "title": title,
+                "content": content,
+                "category": category,
+                "source_edges": source_edges or [],
+                "confidence": confidence,
+                "created_at": time.time(),
+                "action_suggestion": action_suggestion,
+            }
+            self._counter += 1
+            return iid
+
+    async def add_insight_async(self, title: str, content: str, category: str = "general",
+                                 source_edges: Optional[List[str]] = None,
+                                 confidence: float = 0.5,
+                                 action_suggestion: str = "") -> str:
+        """异步添加洞察。返回 insight_id。"""
+        iid = str(uuid.uuid4())
+        if self._lock:
+            async with self._lock:
+                self._insights[iid] = {
+                    "insight_id": iid,
+                    "title": title,
+                    "content": content,
+                    "category": category,
+                    "source_edges": source_edges or [],
+                    "confidence": confidence,
+                    "created_at": time.time(),
+                    "action_suggestion": action_suggestion,
+                }
+                self._counter += 1
+        else:
+            return self.add_insight(title, content, category, source_edges, confidence, action_suggestion)
+        return iid
+
+    def get_insights(self, limit: int = 50, min_confidence: float = 0.0) -> List[dict]:
+        """获取近期洞察。"""
+        with self._sync_lock:
+            insights = [
+                i for i in self._insights.values()
+                if i.get("confidence", 0) >= min_confidence
+            ]
+            insights.sort(key=lambda i: i.get("created_at", 0), reverse=True)
+            return insights[:limit]
+
+    def total(self) -> int:
+        return self._counter
 
 
 # ============ 知识图谱 ============

@@ -20,6 +20,8 @@ from edge_self_healing import EdgeSelfHealing
 from network_discovery import NetworkDiscovery
 from device_monitor import DeviceMonitor
 from knowledge_puller import KnowledgePuller
+from ide_bridge import IDEOrchestrator, detect_ide_tools
+from platform_detectors import DetectorManager, get_detector_manager, detect_all_platforms
 
 # 目录初始化（必须在 logging 之前）
 CONFIG_PATH = Path.home() / ".clawshell-local" / "config" / "cloud.json"
@@ -94,6 +96,15 @@ class EdgeGateway:
         )
         self.knowledge_puller.start()
 
+        # IDE Bridge Orchestrator (Harness Engineering)
+        self.ide_orchestrator = IDEOrchestrator()
+        available_ides = detect_ide_tools()
+        if available_ides:
+            logger.info(f"检测到可用 IDE 工具: {', '.join(available_ides)}")
+
+        # Platform Detectors (P0-Detector)
+        self.detector_manager = DetectorManager()
+
         self.running = False
 
     async def handle_push(self, message: dict):
@@ -125,6 +136,12 @@ class EdgeGateway:
         logger.info(f"Edge Gateway 启动")
         logger.info(f"  Cloud: {self.cloud_url}")
         logger.info(f"  Sync: 每 {self.sync_interval}s")
+
+        # 初始化平台检测器
+        await self.detector_manager.initialize()
+        available_platforms = self.detector_manager.get_available_platforms()
+        logger.info(f"检测到 {len(available_platforms)} 个可用平台: {', '.join(available_platforms) if available_platforms else '无'}")
+
         await self.connect_loop()
 
     async def stop(self):
@@ -137,8 +154,11 @@ class EdgeGateway:
             self.device_monitor.stop()
         if hasattr(self, 'knowledge_puller'):
             self.knowledge_puller.stop()
+        if hasattr(self, 'ide_orchestrator'):
+            logger.info("IDE Bridge 已停止")
         if hasattr(self, 'eventbus'):
             self.eventbus.stop_async_processing()
+        logger.info("Platform Detectors 已停止")
         await self.protocol.close()
 
 
