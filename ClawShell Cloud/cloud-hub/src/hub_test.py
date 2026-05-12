@@ -3,6 +3,9 @@
 import asyncio, json, sys, time
 sys.path.insert(0, '/Users/yangyang/Desktop/ClawShell/ClawShell Cloud/cloud-hub')
 
+from loguru_setup import get_logger
+logger = get_logger("hub_test")
+
 # OssEventStore API (confirmed):
 #   append(topic, source, payload)      -> Event
 #   replay_by_seq(since_seq, limit=1000) -> List[Event]
@@ -72,7 +75,7 @@ results = []
 def check(name, ok, detail=''):
     status = "PASS" if ok else "FAIL"
     results.append((status, name, detail))
-    print(f"[{status}] {name}" + (f" - {detail}" if detail else ""))
+    logger.info(f"[{status}] {name}" + (f" - {detail}" if detail else ""))
 
 
 async def main():
@@ -146,7 +149,7 @@ async def main():
     hub_instance.skill_market = SkillMarket()
     hub_instance.adaptive_controller = AdaptiveController()
 
-    print("Hub ready. Running tests...\n")
+    logger.info("Hub ready. Running tests...\n")
 
     # ── Genome Domain ─────────────────────────────────────────────────────────
     r = await hub_instance.genome_domain.genome_get({"agent_type": "shared"})
@@ -495,7 +498,7 @@ async def main():
     sm = hub_instance.skill_market
     sid = sm.publish(MarketSkill(
         skill_id="", name="test-skill", version="1.0.0",
-        description="A test skill", content="print('hello')",
+        description="A test skill", content="logger.info('hello')",
         author="tester", tags=["test"], category="utility"))
     check("Skill: publish", sid is not None)
     results2 = sm.discover("test")
@@ -567,14 +570,14 @@ async def main():
     # ── Summary ────────────────────────────────────────────────────────────────
     passed = sum(1 for s, _, _ in results if s == "PASS")
     failed = sum(1 for s, _, _ in results if s == "FAIL")
-    print(f"\n{'='*50}")
-    print(f"Results: {passed}/{passed+failed} passed")
+    logger.info(f"\n{'='*50}")
+    logger.info(f"Results: {passed}/{passed+failed} passed")
     if failed:
-        print("\nFAILURES:")
+        logger.warning("\nFAILURES:")
         for s, name, detail in results:
             if s == "FAIL":
-                print(f"  FAIL: {name} - {detail}")
+                logger.error(f"  FAIL: {name} - {detail}")
     else:
-        print("All tests passed!")
+        logger.success("All tests passed!")
 
 asyncio.run(main())

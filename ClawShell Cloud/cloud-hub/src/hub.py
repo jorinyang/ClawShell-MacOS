@@ -100,6 +100,11 @@ class CloudHub:
         self.deep_think_engine = DeepThinkEngine(self.store)
         self.review_domain = ReviewDomain(self.store, self.pubsub)
         self.scheduler_domain = SchedulerDomain(self.store)
+        # 延迟导入避免循环依赖（v2.1 融合 ClawShell-Deep）
+        from .domains.plugin_domain import PluginDomain
+        from .domains.insight_domain import InsightDomain
+        self.plugin_domain = PluginDomain(node_id="hub-01")
+        self.insight_domain = InsightDomain(node_id="hub-01", pubsub=self.pubsub)
 
         # Phase 1 增强组件（从 Windows 移植）
         from .event_store.knowledge_graph import KnowledgeGraph
@@ -167,12 +172,16 @@ class CloudHub:
         """初始化异步资源"""
         await self.store.initialize()
         await self.review_domain.start()
+        await self.insight_domain.start()
+        await self.plugin_domain.start()
         logger.info("CloudHub initialized")
 
     async def shutdown(self) -> None:
         """关闭所有连接"""
         self._running = False
         await self.review_domain.stop()
+        await self.insight_domain.stop()
+        await self.plugin_domain.stop()
         async with self._conn_lock:
             for node_id, ws in list(self._connections.items()):
                 try:

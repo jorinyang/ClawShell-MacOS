@@ -180,11 +180,23 @@ class EcologySlot:
 
 class EcologyMatcher:
     """
-    生态位匹配器。
+    生态位匹配器（借鉴 ClawShell-Deep TerminalManager）。
 
-    根据节点能力填补任务所需的角色槽位，
-    实现多节点协同时的最优角色分配。
+    评分公式：score = 0.4×能力匹配 + 0.3×负载均衡 + 0.3×信任分
+
+    能力匹配 = (节点能力 ∩ 角色所需能力) / (角色所需能力数量)
+    负载均衡 = 1 - (节点失败任务数 / 所有节点总任务数)
+    信任分 = 节点信任分
+
+    信任门槛：0.3（低于此直接排除）
     """
+
+    # 权重（与 Deep TerminalManager 一致）
+    WEIGHT_CAPABILITY = 0.4
+    WEIGHT_LOAD = 0.3
+    WEIGHT_TRUST = 0.3
+
+    TRUST_THRESHOLD = 0.3  # 信任门槛，低于此排除
 
     ROLE_CAPABILITIES = {
         "coordinator": ["planning", "routing", "strategy"],
@@ -197,31 +209,51 @@ class EcologyMatcher:
     def match(self, required_roles: List[str],
               available_nodes: List[Node]) -> Dict[str, Optional[str]]:
         """
-        匹配节点到角色。
+        匹配节点到角色（三因子加权评分）。
 
         Returns:
             {role: node_id or None}
         """
+        # 计算全局负载基准
+        total_tasks = sum(n.failed_tasks + n.successful_tasks for n in available_nodes) or 1
+
         assignments: Dict[str, Optional[str]] = {}
         assigned_nodes: set = set()
 
         for role in required_roles:
             required = set(self.ROLE_CAPABILITIES.get(role, []))
-            best_node = None
-            best_score = -1
+            best_node: Optional[str] = None
+            best_score: float = -1.0
 
             for node in available_nodes:
                 if node.id in assigned_nodes:
                     continue
                 if node.status == NodeStatus.OFFLINE:
                     continue
-                if node.trust_score < 0.3:  # 信任门槛
+                if node.trust_score < self.TRUST_THRESHOLD:
                     continue
 
+                # 因子1：能力匹配（交集/并集）
                 node_caps = set(node.capabilities)
-                overlap = len(required & node_caps)
-                if overlap > best_score:
-                    best_score = overlap
+                cap_overlap = len(required & node_caps)
+                cap_score = cap_overlap / len(required) if required else 0.0
+
+                # 因子2：负载均衡（失败任务占比越低越好）
+                node_load = (node.failed_tasks + node.successful_tasks) / total_tasks
+                load_score = 1.0 - min(node_load, 1.0)
+
+                # 因子3：信任分（直接使用）
+                trust_score = node.trust_score
+
+                # 综合评分
+                score = (
+                    self.WEIGHT_CAPABILITY * cap_score +
+                    self.WEIGHT_LOAD * load_score +
+                    self.WEIGHT_TRUST * trust_score
+                )
+
+                if score > best_score:
+                    best_score = score
                     best_node = node.id
 
             if best_node:

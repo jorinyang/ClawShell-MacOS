@@ -120,16 +120,65 @@ class EdgeGateway:
             logger.debug(f"收到推送: {msg_type}")
 
     async def connect_loop(self):
-        """Maintain connection with automatic reconnection."""
+        """Maintain connection with automatic reconnection (inspired by ClawShell-Deep GanglionTransport).
+
+        重连策略（借鉴 Deep）：
+        - 指数退避：初始 2s，最大 60s，抖动 ±1s
+        - 区分主动关闭（graceful）vs 意外断开（需重连）
+        - reconnect 后 replay 补齐离线期间的事件
+        """
+        BACKOFF_INIT = 2
+        BACKOFF_MAX = 60
+        backoff = BACKOFF_INIT
+        was_connected = False
+
         while self.running:
             try:
                 await self.protocol.connect()
                 await self.protocol.authenticate()
                 await self.sync_engine.full_sync()
+
+                # Replay 离线期间积压的事件
+                queued = self.sync_engine.get_queued_events()
+                if queued:
+                    logger.info(f"Replaying {len(queued)} queued events after reconnect")
+                    for ev in queued:
+                        try:
+                            await self.protocol.mcp_request("sync.replay_event", {"event": ev})
+                        except Exception:
+                            pass
+                    self.sync_engine.clear_replay_queue()
+
+                was_connected = True
+                backoff = BACKOFF_INIT
+                logger.info("Connected and synced, entering listen loop")
                 await self.protocol.listen()
+
+            except asyncio.CancelledError:
+                logger.info("connect_loop cancelled (shutdown)")
+                break
+
+            except websockets.exceptions.ConnectionClosed as e:
+                # 区分主动关闭（code=1000）vs 意外断开
+                if e.code == 1000:
+                    logger.info("Connection gracefully closed by server")
+                    break
+                logger.warning(f"Connection closed unexpectedly (code={e.code}), reconnecting...")
+                if was_connected:
+                    logger.info("Reconnecting after disconnect...")
+
             except Exception as e:
-                logger.error(f"连接错误: {e}")
-                await asyncio.sleep(5)
+                logger.warning(f"Connection error: {e}")
+
+            if not self.running:
+                break
+
+            # 指数退避（借鉴 Deep 重连逻辑）
+            jitter = __import__("random").uniform(-1, 1)
+            wait = min(backoff + jitter, BACKOFF_MAX)
+            logger.debug(f"Reconnecting in {wait:.1f}s (backoff={backoff}s)")
+            await asyncio.sleep(wait)
+            backoff = min(backoff * 1.5, BACKOFF_MAX)
 
     async def start(self):
         self.running = True
