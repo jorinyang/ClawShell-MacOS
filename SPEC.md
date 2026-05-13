@@ -173,6 +173,109 @@ CREATE UNIQUE INDEX idx_name_version ON skills(name, version);
 |------|---------|---------|
 | cloud-hub (WS) | 8443 | 8443 |
 | cloud-hub (REST) | 8080 | 8080 |
+| cloud-hub (MCP) | 8081 | 127.0.0.1（本地） |
+| cloud-hub (HTTP) | 8082 | 127.0.0.1（本地） |
 | skill-registry | 8445 | 8445 |
 | kanban-mcp | 8446 | 8446 |
 | nginx | 443/80 | 443/80 |
+
+---
+
+## 6. Hermes 云端大脑架构（v2.2+）
+
+### 6.1 整体架构
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           阿里云 ECS                                     │
+│                                                                         │
+│   Port 8080：WS Server（Edge 连接）←── ClawShell-MacOS-Local 连接      │
+│   Port 8081：MCP Server（主通道）  ←── Hermes 主用                     │
+│   Port 8082：HTTP API（备用通道）  ←── Hermes 降级                     │
+│                                                                         │
+│   ┌─────────────────────────┐    ┌──────────────────────────────────┐  │
+│   │   CloudHub（协调层）     │◄───│   Hermes Agent（云端大脑）        │  │
+│   │                         │    │                                  │  │
+│   │  EventStore（OSS）      │    │  cloud_hub_connect skill          │  │
+│   │  PubSubManager          │    │  cloud_brain skills              │  │
+│   │  StateAggregator        │    │    ├── insight_analyzer          │  │
+│   │  9 Domains              │    │    ├── review_generator          │  │
+│   │  MCP Server（8081）     │    │    ├── strategy_optimizer        │  │
+│   │  HTTP Server（8082）     │    │    └── deep_thinker             │  │
+│   └─────────────────────────┘    └──────────────┬───────────────────┘  │
+│                                                 │ 双通道写回              │
+│                                                 │ MCP(8081) / HTTP(8082)  │
+│                                                 └──────────────────────┘  │
+│                                                                         │
+│                          MiniMax API（快速层）                           │
+│                          DashScope Qwen-Max（深度层）                     │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### 6.2 双通道握手协议
+
+**消息格式（Hermes → CloudHub）**：
+```json
+{
+  "message_id": "uuid-v4",
+  "seq": 1001,
+  "channel": "mcp",
+  "type": "insight_add | review_publish | strategy_update | deep_think_result",
+  "payload": {...},
+  "timestamp": 1718000000,
+  "retry_count": 0
+}
+```
+
+**ACK 格式（CloudHub → Hermes）**：
+```json
+{
+  "message_id": "uuid-v4",
+  "ack_seq": 1001,
+  "status": "ok | error | duplicate",
+  "channel": "mcp",
+  "detail": ""
+}
+```
+
+**降级策略**：
+1. Hermes 发送消息 → 主通道 MCP（Port 8081）
+2. 3s 无 ACK → 降级备用通道 HTTP（Port 8082）
+3. HTTP 重试 2 次仍失败 → 存入本地 DLQ（`/opt/clawshell/data/dlq/`）
+4. DLQ 每 5 分钟自动重试
+
+**去重**：CloudHub 按 `message_id` 去重，重复消息返回 `status: "duplicate"`
+
+### 6.3 Hermes Skill 触发机制
+
+| 触发条件 | 调用的 Skill | LLM 模型 |
+|---------|------------|---------|
+| `error.*` 事件 | insight_analyzer | MiniMax（快速） |
+| `task.done` 事件 | review_generator | Qwen-Max（深度） |
+| `node.offline` 事件 | insight_analyzer | MiniMax（快速） |
+| `0 8 * * *`（每日） | review_generator | Qwen-Max（深度） |
+| `0 * * * *`（每小时） | insight_analyzer | MiniMax（快速） |
+| 手动触发 | deep_thinker | Qwen-Max（深度） |
+
+### 6.4 Hermes → CloudHub 消息类型
+
+| type | 目标 Domain | 说明 |
+|------|------------|------|
+| `insight_add` | InsightDomain | 洞察结论写入 |
+| `review_publish` | ReviewDomain | 复盘报告写入 |
+| `strategy_update` | AdaptiveDomain | 策略建议更新 |
+| `deep_think_result` | DeepThinkEngine | 深度思考结果写入 |
+
+### 6.5 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `CLOUDHUB_WS_URL` | CloudHub WS 地址（`ws://localhost:8080`） |
+| `CLOUDHUB_MCP_URL` | CloudHub MCP 地址（`http://localhost:8081`） |
+| `CLOUDHUB_HTTP_URL` | CloudHub HTTP 备用（`http://localhost:8082`） |
+| `MINIMAX_API_KEY` | MiniMax API Key（快速层） |
+| `DASHSCOPE_API_KEY` | DashScope API Key（深度层） |
+| `LLM_PROVIDER_FAST` | 快速层 Provider（`minimax`） |
+| `LLM_PROVIDER_DEEP` | 深度层 Provider（`dashscope`） |
+| `DLQ_PATH` | DLQ 目录（`/opt/clawshell/data/dlq`） |

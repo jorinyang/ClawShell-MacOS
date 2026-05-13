@@ -1,0 +1,22 @@
+[Unit]
+Description=Hermes Cloud Brain
+Documentation=https://github.com/jorinyang/ClawShell-MacOS
+After=network.target
+Wants=cloudhub.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/hermes daemon --config /opt/clawshell/hermes/config.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermes-cloud
+Environment="PYTHONPATH=/opt/clawshell/hermes"
+
+# 资源限制
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

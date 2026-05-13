@@ -1,0 +1,7 @@
+{
+  "_comment": "ClawShell Edge Gateway — Cloud 连接配置",
+  "_ECS_NOTE": "部署 ECS 后，将 cloud_url 替换为你的 ECS 公网地址",
+  "cloud_url": "wss://<your-ecs-public-ip>:8080",
+  "jwt_token": "<optional-jwt-token>",
+  "sync_interval_seconds": 60
+}

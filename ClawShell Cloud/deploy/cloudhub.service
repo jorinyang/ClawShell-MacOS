@@ -1,0 +1,30 @@
+[Unit]
+Description=ClawShell CloudHub
+Documentation=https://github.com/jorinyang/ClawShell-MacOS
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/clawshell/cloud-hub/src
+ExecStart=/usr/bin/python3 /opt/clawshell/cloud-hub/src/hub.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=clawshell-cloudhub
+
+# 环境变量
+Environment="PYTHONPATH=/opt/clawshell/cloud-hub/src"
+Environment="LOGuru_LEVEL=INFO"
+
+# 资源限制
+LimitNOFILE=65536
+MemoryMax=2G
+
+# 优雅关闭超时
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

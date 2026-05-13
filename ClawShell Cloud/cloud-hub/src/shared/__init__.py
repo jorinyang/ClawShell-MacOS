@@ -7,6 +7,7 @@ from .models import (
     CortexInfo, SwarmNode, DomainStats, MetricRecord,
 )
 from .config import get_hub_config, HubConfig
+from .handshake import HandshakeManager
 
 __all__ = [
     "NodeType", "NodeStatus", "Strategy", "EventCategory", "EventPriority",
@@ -16,4 +17,5 @@ __all__ = [
     "Plugin", "PluginRegistry", "HealthReport", "RepairAction",
     "CortexInfo", "SwarmNode", "DomainStats", "MetricRecord",
     "get_hub_config", "HubConfig",
+    "HandshakeManager",
 ]
